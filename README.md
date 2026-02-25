@@ -1,514 +1,448 @@
-# Silwane ERP - Complete Enterprise Resource Planning System
+# Silwane ERP
 
-[![Status](https://img.shields.io/badge/Status-Production%20Ready-success)](https://github.com/islamoc/silwane-erp)
-[![Features](https://img.shields.io/badge/Features-29%2F29%20Complete-brightgreen)](./IMPLEMENTATION_STATUS.md)
-[![Node](https://img.shields.io/badge/Node.js-18%2B-339933?logo=node.js)](https://nodejs.org/)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-14%2B-4169E1?logo=postgresql)](https://www.postgresql.org/)
-[![License](https://img.shields.io/badge/License-Proprietary-red)](./LICENSE)
+**Complete Enterprise Resource Planning System for GK PRO STONES**
 
-## 📋 Project Information
-
-- **Proforma**: FP26002386
-- **Client**: GK PRO STONES, Constantine, Algeria
-- **System**: Complete ERP Solution for Stone & Materials Trading
-- **Implementation**: February 2026
-- **Status**: ✅ **ALL 29 FEATURES FULLY IMPLEMENTED**
+A modern, full-stack ERP solution built for stone and marble businesses in Constantine, Algeria.
 
 ## 🎯 Overview
 
-Silwane ERP is a comprehensive enterprise resource planning system specifically designed for GK PRO STONES. The system provides complete management of stock, purchases, sales, finance, and analytics with a modern REST API architecture.
+Silwane ERP is a comprehensive business management system covering all aspects of enterprise operations:
 
-### ✨ Key Features
+- 📦 **Stock Management** - Products, families, movements, traceability
+- 🛒 **Purchase Management** - Orders, suppliers, procurement
+- 💰 **Sales Management** - Quotes, orders, invoices, customers
+- 💵 **Finance & Treasury** - Transactions, reconciliation, cash flow
+- 📊 **Analytics** - VAT declarations, balance sheets, reports
+- 📈 **Statistics** - KPIs, dashboards, business intelligence
+- 👥 **User Management** - Roles, permissions, access control
 
-- **Stock Management**: Complete product catalog, families, and stock movement tracking with full traceability
-- **Purchase Management**: Purchase orders, supplier management, goods receipt processing
-- **Sales Management**: Sales orders, quotes, proforma, customer order processing
-- **Finance & Treasury**: Transaction management, bank reconciliation, cash flow analysis
-- **Analytics**: VAT declarations, balance sheets, financial reporting
-- **User Management**: Role-based access control, secure authentication
-- **Statistics**: Comprehensive dashboards and KPI tracking
+## 🏗️ Architecture
 
-## 📦 Modules Implemented
+### Backend (Node.js + Express + PostgreSQL)
+- RESTful API with 70+ endpoints
+- JWT authentication with role-based access control
+- PostgreSQL database with comprehensive schema
+- Express middleware for security and validation
+- Transaction management for data integrity
 
-### ✅ MC01 - Stock Management (4 Features)
-- G01: Product Management
-- G02: Product Family Management
-- G05: Stock Movement Management
-- G09: Stock Traceability
+### Frontend (React + Material-UI)
+- Modern React 18 application
+- Material-UI component library
+- Responsive design for all devices
+- Real-time data visualization with Recharts
+- Intuitive navigation and user experience
 
-### ✅ MC03 - Purchase Management (1 Feature)
-- G11: Purchase Management Base
+## 📋 Prerequisites
 
-### ✅ MC04 - Sales Management (3 Features)
-- G16: Sales Management Base
-- G17: Quotes and Proforma
-- G18: Customer Orders
-
-### ✅ MC05 - Finance & Treasury (4 Features)
-- G26: Bank Reconciliation
-- G30: Cash Management
-- G08: Third-party Account Management
-- N75: Summary Statements
-
-### ✅ MC07 - Analytics (2 Features)
-- G31: VAT Declaration
-- G33: Balance Sheet
-
-### ✅ MC08 - User Interface (3 Features)
-- G35: User Management
-- G41: Menu and Security
-- N52: Password Authentication
-
-### ✅ MC09 - Statistics (3 Features)
-- G38: General Statistics
-- G39: Invoice Statistics
-- G40: Sales Statistics
-
-### ✅ Additional Entities
-- Supplier Management
-- Customer Management
-
-**Total**: 29/29 Features ✅
+- **Node.js** 16+ and npm
+- **PostgreSQL** 13+
+- **Git**
 
 ## 🚀 Quick Start
 
-### Prerequisites
-
-- Node.js 18 or higher
-- PostgreSQL 14 or higher
-- npm or yarn package manager
-
-### Installation
-
-1. **Clone the repository**
+### 1. Clone Repository
 ```bash
 git clone https://github.com/islamoc/silwane-erp.git
 cd silwane-erp
 ```
 
-2. **Install dependencies**
+### 2. Backend Setup
+
+#### Install Dependencies
 ```bash
 npm install
 ```
 
-3. **Configure environment**
+#### Configure Environment
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` with your configuration:
+Edit `.env` with your settings:
 ```env
 PORT=5000
 NODE_ENV=development
 
+# Database
 DB_HOST=localhost
 DB_PORT=5432
 DB_NAME=silwane_erp
-DB_USER=your_username
+DB_USER=postgres
 DB_PASSWORD=your_password
 
-JWT_SECRET=your_super_secret_key_minimum_32_characters
+# JWT
+JWT_SECRET=your_secret_key_here
 JWT_EXPIRES_IN=24h
+JWT_REFRESH_SECRET=your_refresh_secret_here
 JWT_REFRESH_EXPIRES_IN=7d
 
-CORS_ORIGIN=http://localhost:3000
+# Security
+BCRYPT_ROUNDS=10
 ```
 
-4. **Setup database**
+#### Create Database
 ```bash
-# Create database
-psql -U postgres -c "CREATE DATABASE silwane_erp;"
+# Using psql
+psql -U postgres
+CREATE DATABASE silwane_erp;
+\q
 
-# Run migrations
-psql -U your_username -d silwane_erp -f migrations/001_initial_schema.sql
+# Run database schema
+psql -U postgres -d silwane_erp -f database/schema.sql
 ```
 
-5. **Start the server**
+#### Start Backend
 ```bash
-# Development mode with auto-reload
 npm run dev
+```
 
-# Production mode
+Backend will run at **http://localhost:5000**
+
+### 3. Frontend Setup
+
+#### Navigate to Frontend
+```bash
+cd frontend
+```
+
+#### Install Dependencies
+```bash
+npm install
+```
+
+#### Configure Environment
+```bash
+cp .env.example .env
+```
+
+Edit `frontend/.env`:
+```env
+REACT_APP_API_URL=http://localhost:5000
+REACT_APP_NAME=Silwane ERP
+REACT_APP_COMPANY=GK PRO STONES
+```
+
+#### Start Frontend
+```bash
 npm start
 ```
 
-6. **Verify installation**
-```bash
-curl http://localhost:5000/health
-```
+Frontend will open at **http://localhost:3000**
 
-You should see:
-```json
-{
-  "status": "OK",
-  "timestamp": "2026-02-25T12:00:00.000Z",
-  "uptime": 10.5,
-  "environment": "development"
-}
-```
+## 🌐 Accessing the Application
 
-## 📚 API Documentation
+### Web Interface
+1. Open browser to **http://localhost:3000**
+2. Login with your credentials:
+   - Email: `admin@gkprostones.dz`
+   - Password: (configured during setup)
 
-### Base URL
-```
-http://localhost:5000/api
-```
-
-### Authentication
-
-All protected endpoints require a JWT token in the Authorization header:
-```
-Authorization: Bearer YOUR_JWT_TOKEN
-```
-
-### Main Endpoints
-
-#### Authentication
-```
-POST /api/auth/register     - Register new user
-POST /api/auth/login        - Login
-POST /api/auth/refresh      - Refresh token
-POST /api/auth/logout       - Logout
-```
-
-#### Stock Management
-```
-GET    /api/products              - List products
-POST   /api/products              - Create product
-GET    /api/products/:id          - Get product details
-PUT    /api/products/:id          - Update product
-DELETE /api/products/:id          - Delete product
-
-GET    /api/product-families      - List product families
-POST   /api/product-families      - Create family
-
-GET    /api/stock-movements       - List movements
-POST   /api/stock-movements       - Create movement
-POST   /api/stock-movements/:id/approve - Approve movement
-```
-
-#### Purchase Management
-```
-GET    /api/purchases             - List purchases
-POST   /api/purchases             - Create purchase order
-GET    /api/purchases/:id         - Get purchase details
-PUT    /api/purchases/:id         - Update purchase
-POST   /api/purchases/:id/confirm - Confirm order
-POST   /api/purchases/:id/receive - Receive goods
-POST   /api/purchases/:id/cancel  - Cancel order
-DELETE /api/purchases/:id         - Delete order (draft only)
-```
-
-#### Sales Management
-```
-GET    /api/sales                 - List sales orders
-POST   /api/sales                 - Create sales order
-GET    /api/sales/:id             - Get order details
-PUT    /api/sales/:id             - Update order
-POST   /api/sales/:id/confirm     - Confirm order
-POST   /api/sales/:id/ship        - Ship order
-POST   /api/sales/:id/cancel      - Cancel order
-DELETE /api/sales/:id             - Delete order (draft only)
-```
-
-#### Finance
-```
-GET    /api/finance/transactions  - List transactions
-POST   /api/finance/transactions  - Create transaction
-GET    /api/finance/cash-flow     - Get cash flow
-POST   /api/finance/reconcile     - Bank reconciliation
-GET    /api/finance/summary       - Financial summary
-```
-
-#### Analytics & Statistics
-```
-GET    /api/analytics/vat         - VAT declaration
-GET    /api/analytics/balance     - Balance sheet
-
-GET    /api/statistics/general    - General statistics
-GET    /api/statistics/invoices   - Invoice statistics
-GET    /api/statistics/sales      - Sales statistics
-```
-
-#### Suppliers & Customers
-```
-GET    /api/suppliers             - List suppliers
-POST   /api/suppliers             - Create supplier
-GET    /api/suppliers/:id         - Get supplier details
-PUT    /api/suppliers/:id         - Update supplier
-DELETE /api/suppliers/:id         - Delete supplier
-
-GET    /api/customers             - List customers
-POST   /api/customers             - Create customer
-GET    /api/customers/:id         - Get customer details
-PUT    /api/customers/:id         - Update customer
-DELETE /api/customers/:id         - Delete customer
-```
-
-### Example Requests
-
-#### 1. Register Admin User
-```bash
-curl -X POST http://localhost:5000/api/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{
-    "username": "admin",
-    "email": "admin@gkprostones.dz",
-    "password": "SecurePass123!",
-    "role": "admin",
-    "first_name": "Admin",
-    "last_name": "User"
-  }'
-```
-
-#### 2. Login
-```bash
-curl -X POST http://localhost:5000/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "admin@gkprostones.dz",
-    "password": "SecurePass123!"
-  }'
-```
-
-#### 3. Create Product
-```bash
-curl -X POST http://localhost:5000/api/products \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "sku": "STONE-001",
-    "name": "Granite Stone 30x30",
-    "description": "Premium granite stone",
-    "unit": "m2",
-    "unit_price": 2500.00,
-    "cost_price": 1800.00,
-    "stock_quantity": 100,
-    "min_stock_level": 20
-  }'
-```
-
-## 💻 Technology Stack
-
-### Backend
-- **Runtime**: Node.js 18+
-- **Framework**: Express.js 4.18+
-- **Database**: PostgreSQL 14+
-- **Authentication**: JWT (jsonwebtoken)
-- **Password Hashing**: bcrypt
-- **Logging**: Winston
-- **Environment Management**: dotenv
-
-### Security
-- **Helmet**: Security headers
-- **CORS**: Cross-origin resource sharing
-- **Rate Limiting**: API request throttling
-- **SQL Injection Prevention**: Parameterized queries
-- **JWT**: Secure token-based authentication
-- **RBAC**: Role-based access control
-
-### Database
-- **PostgreSQL**: Primary database
-- **Connection Pooling**: Optimized database connections
-- **Transactions**: ACID compliance
-- **Migrations**: Version-controlled schema
-
-## 🛡️ Security Features
-
-### Authentication & Authorization
-- JWT-based authentication with refresh tokens
-- Password hashing with bcrypt (10 salt rounds)
-- Role-based access control (7 roles)
-- Session management
-- Token expiration and refresh mechanism
-
-### Roles & Permissions
-1. **admin**: Full system access
-2. **manager**: Management operations
-3. **sales**: Sales and customer management
-4. **purchasing**: Purchase and supplier management
-5. **warehouse**: Stock and inventory operations
-6. **accountant**: Finance and reporting
-7. **viewer**: Read-only access
-
-### API Protection
-- Rate limiting (configurable per endpoint)
-- CORS configuration
-- Request size limits
-- Helmet security headers
-- Input validation and sanitization
+### API Access
+- Base URL: **http://localhost:5000/api**
+- Health Check: **http://localhost:5000/health**
+- API Documentation: See [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md)
 
 ## 📁 Project Structure
 
 ```
 silwane-erp/
-├── config/
-│   ├── database.js          # PostgreSQL configuration
-│   └── logger.js            # Winston logger setup
-├── controllers/
-│   ├── authController.js
-│   ├── userController.js
-│   ├── productController.js
-│   ├── stockMovementController.js
-│   ├── purchaseController.js
-│   ├── salesOrderController.js
-│   ├── financeController.js
-│   ├── analyticsController.js
-│   └── statisticsController.js
-├── middleware/
-│   ├── auth.js              # JWT auth & authorization
-│   └── errorHandler.js      # Global error handling
-├── routes/
-│   ├── auth.js
-│   ├── products.js
-│   ├── purchases.js
-│   ├── sales.js
-│   ├── finance.js
-│   └── ...
-├── migrations/
-│   └── 001_initial_schema.sql
-├── logs/
-│   ├── combined.log
-│   └── error.log
-├── server.js               # Main application
-├── package.json
-├── .env.example
-├── README.md
-└── IMPLEMENTATION_STATUS.md
+├── backend/
+│   ├── config/             # Configuration files
+│   ├── controllers/        # Route controllers
+│   ├── database/           # Database schema and migrations
+│   ├── middleware/         # Express middleware
+│   ├── routes/             # API routes
+│   ├── utils/              # Utility functions
+│   └── server.js           # Entry point
+├── frontend/
+│   ├── public/             # Static files
+│   ├── src/
+│   │   ├── components/     # Reusable components
+│   │   ├── contexts/       # React contexts
+│   │   ├── pages/          # Page components
+│   │   ├── services/       # API services
+│   │   └── App.js          # Main app
+│   └── package.json
+├── DEPLOYMENT_GUIDE.md     # Production deployment
+├── IMPLEMENTATION_STATUS.md # Feature documentation
+└── README.md               # This file
 ```
 
-## 📋 Database Schema
+## 🎨 Features
 
-### Core Tables
-- `users` - User accounts and roles
-- `products` - Product catalog
-- `product_families` - Product categories
-- `stock_movements` - Inventory transactions
-- `suppliers` - Supplier directory
-- `customers` - Customer directory
-- `purchases` - Purchase orders
-- `purchase_items` - PO line items
-- `sales_orders` - Sales orders
-- `sales_order_items` - SO line items
-- `quotes` - Customer quotes
-- `transactions` - Financial transactions
-- `accounts` - Chart of accounts
-- `bank_accounts` - Bank information
-- `reconciliations` - Bank reconciliation records
+### Dashboard
+- Real-time KPIs and business metrics
+- Sales trends and analytics
+- Top products visualization
+- Financial summaries
+- Quick action links
 
-## 🚢 Deployment
+### Stock Management (MC01)
+- Product catalog with SKU tracking
+- Product families and categories
+- Stock movements (in/out/adjustment)
+- Full traceability history
+- Low stock alerts
+- Min/max stock levels
 
-### Production Setup
+### Purchase Management (MC03)
+- Purchase order creation and tracking
+- Supplier management
+- Order status workflow
+- Supplier performance tracking
 
-1. **Environment Configuration**
+### Sales Management (MC04)
+- Quote generation and management
+- Quote to order conversion
+- Customer order tracking
+- Invoice generation
+- Payment status tracking
+- Customer management
+
+### Finance & Treasury (MC05)
+- Transaction management
+- Bank reconciliation
+- Cash flow analysis and forecasting
+- Chart of accounts (5 types)
+- Financial summary statements
+- Multi-currency support
+
+### Analytics (MC07)
+- VAT declaration reports
+- Balance sheet generation
+- Profit & loss statements
+- Period comparisons
+
+### Statistics (MC09)
+- Dashboard KPIs
+- Sales analytics with trends
+- Invoice statistics
+- Product performance
+- Customer segmentation
+
+### User Management (MC08)
+- User account management
+- 7 role-based access levels
+- JWT authentication
+- Password management
+- Activity logging
+
+## 🔐 Security Features
+
+- **JWT Authentication** - Secure token-based auth
+- **Role-Based Access Control** - 7 permission levels
+- **Password Hashing** - bcrypt with 10 rounds
+- **SQL Injection Protection** - Parameterized queries
+- **CORS Protection** - Configured origins
+- **Rate Limiting** - API request throttling
+- **Input Validation** - Request sanitization
+- **Audit Trails** - Complete activity logging
+
+## 📊 API Endpoints
+
+### Core Modules (70+ endpoints)
+
+**Authentication**
+- POST `/api/auth/login` - User login
+- POST `/api/auth/register` - User registration
+- POST `/api/auth/refresh` - Token refresh
+
+**Products**
+- GET `/api/products` - List products
+- GET `/api/products/:id` - Get product
+- POST `/api/products` - Create product
+- PUT `/api/products/:id` - Update product
+- DELETE `/api/products/:id` - Delete product
+
+**Sales**
+- GET `/api/quotes` - List quotes
+- POST `/api/quotes` - Create quote
+- POST `/api/quotes/:id/convert` - Convert to order
+- GET `/api/orders` - List orders
+- GET `/api/invoices` - List invoices
+
+**Finance**
+- GET `/api/finance/transactions` - List transactions
+- POST `/api/finance/transactions` - Create transaction
+- GET `/api/finance/cashflow` - Cash flow analysis
+- GET `/api/finance/summary` - Financial summary
+
+**Analytics**
+- GET `/api/analytics/vat` - VAT declaration
+- GET `/api/analytics/balance-sheet` - Balance sheet
+
+**Statistics**
+- GET `/api/statistics/dashboard` - Dashboard stats
+- GET `/api/statistics/sales` - Sales analytics
+- GET `/api/statistics/invoices` - Invoice stats
+
+See [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) for complete API documentation.
+
+## 🚀 Production Deployment
+
+For detailed production deployment instructions, see [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md).
+
+### Quick Production Setup
+
+#### 1. Build Frontend
 ```bash
-NODE_ENV=production
-PORT=5000
-# Use strong secrets in production
-JWT_SECRET=your_production_secret_min_32_chars
+cd frontend
+npm run build
 ```
 
-2. **Database Setup**
-```bash
-# Ensure PostgreSQL is optimized for production
-# Configure connection pooling
-# Set up regular backups
-```
-
-3. **Process Manager (PM2)**
-```bash
-npm install -g pm2
-pm2 start server.js --name silwane-erp
-pm2 startup
-pm2 save
-```
-
-4. **Reverse Proxy (nginx)**
+#### 2. Configure Nginx
 ```nginx
 server {
     listen 80;
-    server_name api.yourdomain.com;
+    server_name erp.gkprostones.dz;
+
+    # Frontend
+    root /var/www/silwane-erp/frontend/build;
+    index index.html;
 
     location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # API Proxy
+    location /api {
         proxy_pass http://localhost:5000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
         proxy_set_header Host $host;
-        proxy_cache_bypass $http_upgrade;
+        proxy_set_header X-Real-IP $remote_addr;
     }
 }
 ```
 
-### Production Checklist
-- [ ] Set strong JWT secret
-- [ ] Configure production database
-- [ ] Set up HTTPS/SSL
-- [ ] Configure firewall
-- [ ] Set up database backups
-- [ ] Configure log rotation
-- [ ] Set up monitoring
-- [ ] Review rate limits
-- [ ] Configure CORS properly
-- [ ] Test all endpoints
-
-## 📈 Monitoring
-
-### Health Check
+#### 3. Enable HTTPS
 ```bash
-GET /health
+sudo certbot --nginx -d erp.gkprostones.dz
 ```
 
-Returns system health status:
-```json
-{
-  "status": "OK",
-  "timestamp": "2026-02-25T12:00:00.000Z",
-  "uptime": 3600,
-  "environment": "production"
-}
+#### 4. Start with PM2
+```bash
+pm2 start server.js --name silwane-erp
+pm2 save
+pm2 startup
 ```
 
-### Logs
-- **Combined logs**: `logs/combined.log`
-- **Error logs**: `logs/error.log`
-- **Log format**: JSON with timestamps
-- **Log rotation**: Configured in `config/logger.js`
+## 🧪 Testing
 
-## 👥 Support
+### Test API with cURL
+```bash
+# Login
+curl -X POST http://localhost:5000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email": "admin@gkprostones.dz", "password": "your_password"}'
 
-### Documentation
-- [Complete Implementation Status](./IMPLEMENTATION_STATUS.md)
-- [API Endpoints Reference](http://localhost:5000/) - Full list at root endpoint
-- Database schema in `migrations/` folder
+# Get products (with token)
+curl http://localhost:5000/api/products \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
 
-### Issues
-For bugs or feature requests, please contact:
-- **Client**: GK PRO STONES
-- **Location**: Constantine, Algeria
-- **Repository**: https://github.com/islamoc/silwane-erp
+### Test with Postman
+1. Import API collection
+2. Set environment variables
+3. Test all endpoints
 
-## 📝 License
+## 📖 Documentation
 
-Proprietary - Copyright © 2026 GK PRO STONES
+- [Implementation Status](IMPLEMENTATION_STATUS.md) - Complete feature matrix and API docs
+- [Deployment Guide](DEPLOYMENT_GUIDE.md) - Production deployment instructions
+- [Frontend README](frontend/README.md) - Frontend-specific documentation
 
-This software is proprietary and confidential. Unauthorized copying, distribution, or use of this software is strictly prohibited.
+## 🛠️ Development
 
-## ✅ Project Status
+### Adding New Features
+1. Create controller in `controllers/`
+2. Define routes in `routes/`
+3. Update database schema if needed
+4. Create frontend pages in `frontend/src/pages/`
+5. Add API calls in `frontend/src/services/api.js`
+6. Update navigation in `frontend/src/components/Layout.js`
 
-**All 29 features from Proforma FP26002386 are fully implemented and tested!**
+### Code Style
+- Backend: Node.js with ES6+
+- Frontend: React with functional components
+- Use async/await for async operations
+- Follow REST API conventions
+- Material-UI for consistent styling
 
-- ✅ Stock Management (4 features)
-- ✅ Purchase Management (1 feature)
-- ✅ Sales Management (3 features)
-- ✅ Finance & Treasury (4 features)
-- ✅ Analytics (2 features)
-- ✅ User Interface (3 features)
-- ✅ Statistics (3 features)
-- ✅ Supplier & Customer Management
+## 🐛 Troubleshooting
 
-**Status**: Production Ready 🚀
+### Backend Issues
+
+**Database connection failed**
+```bash
+# Check PostgreSQL is running
+sudo systemctl status postgresql
+
+# Verify credentials in .env
+# Test connection
+psql -h localhost -U postgres -d silwane_erp
+```
+
+**Port 5000 already in use**
+```bash
+# Change port in .env
+PORT=5001
+
+# Or kill process
+lsof -ti:5000 | xargs kill -9
+```
+
+### Frontend Issues
+
+**Cannot connect to backend**
+- Verify backend is running
+- Check `REACT_APP_API_URL` in `.env`
+- Verify CORS configuration
+
+**Build fails**
+```bash
+# Clear cache
+rm -rf node_modules package-lock.json
+npm install
+```
+
+## 📞 Support
+
+- **GitHub Issues**: [Report bugs or request features](https://github.com/islamoc/silwane-erp/issues)
+- **Documentation**: Check documentation files
+- **Email**: contact@gkprostones.dz
+
+## 🚀 Roadmap
+
+### Phase 1 (Complete) ✅
+- [x] Core backend API
+- [x] Database schema
+- [x] All 29 features implemented
+- [x] Authentication and authorization
+- [x] React frontend with all modules
+- [x] Dashboard with charts
+- [x] Complete CRUD operations
+
+### Phase 2 (Future)
+- [ ] Real-time notifications
+- [ ] Email integration
+- [ ] PDF generation for invoices
+- [ ] Advanced reporting
+- [ ] Mobile app (React Native)
+- [ ] Multi-language support (French/Arabic)
+- [ ] Barcode scanning
+- [ ] Inventory optimization
+
+## 📄 License
+
+Proprietary - GK PRO STONES © 2026
+
+## 👏 Acknowledgments
+
+- Built for **GK PRO STONES**, Constantine, Algeria
+- Implementing requirements from **Proforma FP26002386**
+- Complete ERP solution for stone and marble industry
 
 ---
 
-**Built with ❤️ for GK PRO STONES, Constantine**
+**🌟 Status: PRODUCTION READY**
+
+Full-stack application with backend API (29 features) and React frontend complete!
