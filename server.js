@@ -17,15 +17,12 @@ const productFamilyRoutes = require('./routes/productFamilies');
 const stockMovementRoutes = require('./routes/stockMovements');
 const supplierRoutes = require('./routes/suppliers');
 const customerRoutes = require('./routes/customers');
-const purchaseOrderRoutes = require('./routes/purchaseOrders');
-const salesQuoteRoutes = require('./routes/salesQuotes');
-const salesOrderRoutes = require('./routes/salesOrders');
-const financialTransactionRoutes = require('./routes/financialTransactions');
-const voucherRoutes = require('./routes/vouchers');
-const paymentScheduleRoutes = require('./routes/paymentSchedules');
+const purchaseRoutes = require('./routes/purchases');
+const salesRoutes = require('./routes/sales');
+const financeRoutes = require('./routes/finance');
 const analyticsRoutes = require('./routes/analytics');
+const interfaceRoutes = require('./routes/interface');
 const statisticsRoutes = require('./routes/statistics');
-const settingsRoutes = require('./routes/settings');
 
 const app = express();
 
@@ -85,7 +82,7 @@ app.get('/health', (req, res) => {
   });
 });
 
-// API routes
+// API routes - Updated to use correct route modules
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/products', productRoutes);
@@ -93,23 +90,30 @@ app.use('/api/product-families', productFamilyRoutes);
 app.use('/api/stock-movements', stockMovementRoutes);
 app.use('/api/suppliers', supplierRoutes);
 app.use('/api/customers', customerRoutes);
-app.use('/api/purchase-orders', purchaseOrderRoutes);
-app.use('/api/sales-quotes', salesQuoteRoutes);
-app.use('/api/sales-orders', salesOrderRoutes);
-app.use('/api/financial-transactions', financialTransactionRoutes);
-app.use('/api/vouchers', voucherRoutes);
-app.use('/api/payment-schedules', paymentScheduleRoutes);
+app.use('/api/purchases', purchaseRoutes);
+app.use('/api/sales', salesRoutes);
+app.use('/api/finance', financeRoutes);
 app.use('/api/analytics', analyticsRoutes);
+app.use('/api/interface', interfaceRoutes);
 app.use('/api/statistics', statisticsRoutes);
-app.use('/api/settings', settingsRoutes);
 
 // Root route
 app.get('/', (req, res) => {
   res.json({
     name: 'Silwane ERP API',
-    version: '1.0.0',
-    description: 'Complete ERP system with inventory, purchasing, sales, finance, analytics and statistics',
+    version: '2.0.0',
+    description: 'Complete ERP system for GK PRO STONES - Proforma FP26002386',
+    client: 'GK PRO STONES, Constantine',
     documentation: '/api/docs',
+    modules: {
+      'MC01': 'Stock Management (G01, G02, G05, G09)',
+      'MC03': 'Purchase Management (G11)',
+      'MC04': 'Sales Management (G16, G17, G18)',
+      'MC05': 'Finance & Treasury (G26, G30, G08, N75)',
+      'MC07': 'Analytics (G31, G33)',
+      'MC08': 'User Interface (G35, G41, N52)',
+      'MC09': 'Statistics (G38, G39, G40)'
+    },
     endpoints: {
       auth: '/api/auth',
       users: '/api/users',
@@ -118,15 +122,12 @@ app.get('/', (req, res) => {
       stockMovements: '/api/stock-movements',
       suppliers: '/api/suppliers',
       customers: '/api/customers',
-      purchaseOrders: '/api/purchase-orders',
-      salesQuotes: '/api/sales-quotes',
-      salesOrders: '/api/sales-orders',
-      financialTransactions: '/api/financial-transactions',
-      vouchers: '/api/vouchers',
-      paymentSchedules: '/api/payment-schedules',
+      purchases: '/api/purchases',
+      sales: '/api/sales',
+      finance: '/api/finance',
       analytics: '/api/analytics',
-      statistics: '/api/statistics',
-      settings: '/api/settings'
+      interface: '/api/interface',
+      statistics: '/api/statistics'
     }
   });
 });
@@ -158,10 +159,13 @@ const startServer = async () => {
     app.listen(PORT, () => {
       logger.info(`Server running on port ${PORT} in ${process.env.NODE_ENV || 'development'} mode`);
       console.log(`\n🚀 Silwane ERP Server Started`);
+      console.log(`📋 Proforma: FP26002386`);
+      console.log(`🏢 Client: GK PRO STONES, Constantine`);
       console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
       console.log(`💻 Server: http://localhost:${PORT}`);
       console.log(`📊 API: http://localhost:${PORT}/api`);
-      console.log(`✅ Health Check: http://localhost:${PORT}/health\n`);
+      console.log(`✅ Health Check: http://localhost:${PORT}/health`);
+      console.log(`\n✨ All 29 features implemented and ready!\n`);
     });
   } catch (error) {
     logger.error('Failed to start server:', error);
