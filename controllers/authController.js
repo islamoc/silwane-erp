@@ -37,20 +37,33 @@ exports.register = async (req, res) => {
       });
     }
 
-    const { email, password, first_name, last_name, role = 'user' } = req.body;
+    const { email, password, first_name, last_name, username, role = 'viewer' } = req.body;
 
     // Check if user already exists
     const existingUser = await db.query(
-      'SELECT id FROM users WHERE email = $1',
-      [email]
+      'SELECT id FROM users WHERE email = $1 OR username = $2',
+      [email, username || email]
     );
 
     if (existingUser.rows.length > 0) {
       return res.status(400).json({
         success: false,
-        message: 'User with this email already exists'
+        message: 'User with this email or username already exists'
       });
     }
+
+    // Get role_id
+    const roleQuery = 'SELECT id FROM user_roles WHERE name = $1';
+    const roleResult = await db.query(roleQuery, [role]);
+    
+    if (roleResult.rows.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid role specified'
+      });
+    }
+    
+    const roleId = roleResult.rows[0].id;
 
     // Hash password
     const salt = await bcrypt.genSalt(10);
@@ -58,23 +71,24 @@ exports.register = async (req, res) => {
 
     // Create user
     const query = `
-      INSERT INTO users (email, password_hash, first_name, last_name, role, is_active)
-      VALUES ($1, $2, $3, $4, $5, true)
-      RETURNING id, email, first_name, last_name, role, is_active, created_at
+      INSERT INTO users (username, email, password_hash, first_name, last_name, role_id, is_active)
+      VALUES ($1, $2, $3, $4, $5, $6, true)
+      RETURNING id, username, email, first_name, last_name, role_id, is_active, created_at
     `;
 
     const result = await db.query(query, [
+      username || email.split('@')[0],
       email,
       hashedPassword,
       first_name,
       last_name,
-      role
+      roleId
     ]);
 
     const user = result.rows[0];
 
     // Generate token
-    const token = generateToken(user.id, user.email, user.role);
+    const token = generateToken(user.id, user.email, role);
 
     res.status(201).json({
       success: true,
@@ -82,10 +96,11 @@ exports.register = async (req, res) => {
       data: {
         user: {
           id: user.id,
+          username: user.username,
           email: user.email,
           first_name: user.first_name,
           last_name: user.last_name,
-          role: user.role,
+          role: role,
           is_active: user.is_active
         },
         token
@@ -117,11 +132,13 @@ exports.login = async (req, res) => {
 
     const { email, password } = req.body;
 
-    // Get user by email
+    // Get user by email with role information
     const query = `
-      SELECT id, email, password_hash, first_name, last_name, role, is_active, last_login
-      FROM users
-      WHERE email = $1
+      SELECT u.id, u.username, u.email, u.password_hash, u.first_name, u.last_name, 
+             u.is_active, u.last_login, u.role_id, r.name as role
+      FROM users u
+      LEFT JOIN user_roles r ON u.role_id = r.id
+      WHERE u.email = $1
     `;
 
     const result = await db.query(query, [email]);
@@ -144,14 +161,18 @@ exports.login = async (req, res) => {
     }
 
     // Verify password
+    console.log('Attempting login for:', email);
     const isPasswordValid = await bcrypt.compare(password, user.password_hash);
 
     if (!isPasswordValid) {
+      console.log('Password validation failed for:', email);
       return res.status(401).json({
         success: false,
         message: 'Invalid credentials'
       });
     }
+
+    console.log('Login successful for:', email);
 
     // Update last login
     await db.query(
@@ -160,7 +181,7 @@ exports.login = async (req, res) => {
     );
 
     // Generate token
-    const token = generateToken(user.id, user.email, user.role);
+    const token = generateToken(user.id, user.email, user.role || 'viewer');
 
     res.json({
       success: true,
@@ -168,10 +189,11 @@ exports.login = async (req, res) => {
       data: {
         user: {
           id: user.id,
+          username: user.username,
           email: user.email,
           first_name: user.first_name,
           last_name: user.last_name,
-          role: user.role,
+          role: user.role || 'viewer',
           is_active: user.is_active,
           last_login: user.last_login
         },
@@ -195,10 +217,11 @@ exports.login = async (req, res) => {
 exports.getProfile = async (req, res) => {
   try {
     const query = `
-      SELECT id, email, first_name, last_name, role, phone, is_active,
-             created_at, last_login
-      FROM users
-      WHERE id = $1
+      SELECT u.id, u.username, u.email, u.first_name, u.last_name, u.phone, u.is_active,
+             u.created_at, u.last_login, r.name as role
+      FROM users u
+      LEFT JOIN user_roles r ON u.role_id = r.id
+      WHERE u.id = $1
     `;
 
     const result = await db.query(query, [req.user.id]);
@@ -239,7 +262,7 @@ exports.updateProfile = async (req, res) => {
           phone = COALESCE($3, phone),
           updated_at = CURRENT_TIMESTAMP
       WHERE id = $4
-      RETURNING id, email, first_name, last_name, phone, role, is_active
+      RETURNING id, username, email, first_name, last_name, phone, is_active
     `;
 
     const result = await db.query(query, [
