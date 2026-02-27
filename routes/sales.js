@@ -36,6 +36,7 @@ router.get('/', authenticate, async (req, res) => {
       LEFT JOIN users u ON s.created_by = u.id
       WHERE 1=1
     `;
+
     const params = [];
     let paramCount = 1;
 
@@ -85,7 +86,7 @@ router.get('/', authenticate, async (req, res) => {
     });
   } catch (error) {
     console.error('Error fetching sales orders:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: 'Internal server error', details: error.message });
   }
 });
 
@@ -101,7 +102,7 @@ router.get('/:id', authenticate, async (req, res) => {
         c.name as customer_name,
         c.email as customer_email,
         c.phone as customer_phone,
-        c.address as customer_address,
+        c.billing_address_line1 as customer_address,
         u.username as created_by_username
       FROM sales_orders s
       LEFT JOIN customers c ON s.customer_id = c.id
@@ -119,11 +120,11 @@ router.get('/:id', authenticate, async (req, res) => {
         si.*,
         p.name as product_name,
         p.sku as product_sku,
-        p.unit as product_unit
+        p.unit_of_measure as product_unit
       FROM sales_order_items si
       LEFT JOIN products p ON si.product_id = p.id
       WHERE si.sales_order_id = $1
-      ORDER BY si.line_number
+      ORDER BY si.id
     `, [id]);
 
     res.json({
@@ -132,7 +133,7 @@ router.get('/:id', authenticate, async (req, res) => {
     });
   } catch (error) {
     console.error('Error fetching sales order:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: 'Internal server error', details: error.message });
   }
 });
 
@@ -143,10 +144,9 @@ router.post('/', authenticate, authorize(['admin', 'manager', 'sales']), async (
     const {
       customer_id,
       order_date,
-      delivery_date,
+      expected_delivery_date,
       payment_terms,
       shipping_address,
-      billing_address,
       notes,
       items
     } = req.body;
@@ -170,51 +170,48 @@ router.post('/', authenticate, authorize(['admin', 'manager', 'sales']), async (
     let subtotal = 0;
     items.forEach(item => {
       const itemTotal = parseFloat(item.quantity) * parseFloat(item.unit_price);
-      const discount = itemTotal * (parseFloat(item.discount_percent || 0) / 100);
+      const discount = itemTotal * (parseFloat(item.discount_percentage || 0) / 100);
       subtotal += itemTotal - discount;
     });
+
     const tax_amount = subtotal * 0.19; // 19% VAT
     const total_amount = subtotal + tax_amount;
 
     // Insert sales order header
     const orderResult = await client.query(`
       INSERT INTO sales_orders (
-        order_number, customer_id, order_date, delivery_date,
+        order_number, customer_id, order_date, expected_delivery_date,
         status, subtotal, tax_amount, total_amount,
-        payment_terms, shipping_address, billing_address, notes, created_by
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        payment_terms, shipping_address, notes, created_by
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
       RETURNING *
     `, [
-      orderNumber, customer_id, order_date, delivery_date,
-      'draft', subtotal, tax_amount, total_amount,
-      payment_terms, shipping_address, billing_address, notes, req.user.userId
+      orderNumber, customer_id, order_date, expected_delivery_date,
+      'PENDING', subtotal, tax_amount, total_amount,
+      payment_terms, shipping_address, notes, req.user.userId
     ]);
 
     const orderId = orderResult.rows[0].id;
 
     // Insert order items
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
+    for (const item of items) {
       const itemTotal = item.quantity * item.unit_price;
-      const discount = itemTotal * ((item.discount_percent || 0) / 100);
-      const taxableAmount = itemTotal - discount;
-      const tax = taxableAmount * ((item.tax_percent || 19) / 100);
-      const totalPrice = taxableAmount + tax;
+      const discount = itemTotal * ((item.discount_percentage || 0) / 100);
+      const line_total = (itemTotal - discount) * (1 + (item.tax_rate || 19) / 100);
 
       await client.query(`
         INSERT INTO sales_order_items (
-          sales_order_id, product_id, line_number, quantity,
-          unit_price, discount_percent, tax_percent, total_price
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          sales_order_id, product_id, quantity,
+          unit_price, discount_percentage, tax_rate, line_total
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7)
       `, [
-        orderId, item.product_id, i + 1, item.quantity,
-        item.unit_price, item.discount_percent || 0, item.tax_percent || 19,
-        totalPrice
+        orderId, item.product_id, item.quantity,
+        item.unit_price, item.discount_percentage || 0, item.tax_rate || 19,
+        line_total
       ]);
     }
 
     await client.query('COMMIT');
-
     res.status(201).json({
       message: 'Sales order created successfully',
       sales_order: orderResult.rows[0]
@@ -222,110 +219,7 @@ router.post('/', authenticate, authorize(['admin', 'manager', 'sales']), async (
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Error creating sales order:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  } finally {
-    client.release();
-  }
-});
-
-// Update sales order
-router.put('/:id', authenticate, authorize(['admin', 'manager', 'sales']), async (req, res) => {
-  const client = await pool.connect();
-  try {
-    const { id } = req.params;
-    const {
-      customer_id,
-      order_date,
-      delivery_date,
-      payment_terms,
-      shipping_address,
-      billing_address,
-      notes,
-      items
-    } = req.body;
-
-    // Check if order exists and is editable
-    const checkResult = await client.query(
-      'SELECT status FROM sales_orders WHERE id = $1',
-      [id]
-    );
-
-    if (checkResult.rows.length === 0) {
-      return res.status(404).json({ error: 'Sales order not found' });
-    }
-
-    if (['confirmed', 'shipped', 'delivered', 'cancelled'].includes(checkResult.rows[0].status)) {
-      return res.status(400).json({ error: 'Cannot edit order in current status' });
-    }
-
-    await client.query('BEGIN');
-
-    // Calculate new totals
-    let subtotal = 0;
-    items.forEach(item => {
-      const itemTotal = parseFloat(item.quantity) * parseFloat(item.unit_price);
-      const discount = itemTotal * (parseFloat(item.discount_percent || 0) / 100);
-      subtotal += itemTotal - discount;
-    });
-    const tax_amount = subtotal * 0.19;
-    const total_amount = subtotal + tax_amount;
-
-    // Update order header
-    const updateResult = await client.query(`
-      UPDATE sales_orders SET
-        customer_id = $1,
-        order_date = $2,
-        delivery_date = $3,
-        subtotal = $4,
-        tax_amount = $5,
-        total_amount = $6,
-        payment_terms = $7,
-        shipping_address = $8,
-        billing_address = $9,
-        notes = $10,
-        updated_at = CURRENT_TIMESTAMP
-      WHERE id = $11
-      RETURNING *
-    `, [
-      customer_id, order_date, delivery_date,
-      subtotal, tax_amount, total_amount,
-      payment_terms, shipping_address, billing_address, notes, id
-    ]);
-
-    // Delete existing items
-    await client.query('DELETE FROM sales_order_items WHERE sales_order_id = $1', [id]);
-
-    // Insert new items
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
-      const itemTotal = item.quantity * item.unit_price;
-      const discount = itemTotal * ((item.discount_percent || 0) / 100);
-      const taxableAmount = itemTotal - discount;
-      const tax = taxableAmount * ((item.tax_percent || 19) / 100);
-      const totalPrice = taxableAmount + tax;
-
-      await client.query(`
-        INSERT INTO sales_order_items (
-          sales_order_id, product_id, line_number, quantity,
-          unit_price, discount_percent, tax_percent, total_price
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-      `, [
-        id, item.product_id, i + 1, item.quantity,
-        item.unit_price, item.discount_percent || 0, item.tax_percent || 19,
-        totalPrice
-      ]);
-    }
-
-    await client.query('COMMIT');
-
-    res.json({
-      message: 'Sales order updated successfully',
-      sales_order: updateResult.rows[0]
-    });
-  } catch (error) {
-    await client.query('ROLLBACK');
-    console.error('Error updating sales order:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: 'Internal server error', details: error.message });
   } finally {
     client.release();
   }
@@ -336,12 +230,11 @@ router.post('/:id/confirm', authenticate, authorize(['admin', 'manager', 'sales'
   const client = await pool.connect();
   try {
     const { id } = req.params;
-
     await client.query('BEGIN');
 
     // Check stock availability
     const itemsResult = await client.query(`
-      SELECT si.product_id, si.quantity, p.stock_quantity, p.name
+      SELECT si.product_id, si.quantity, p.quantity_in_stock, p.name
       FROM sales_order_items si
       JOIN products p ON si.product_id = p.id
       WHERE si.sales_order_id = $1
@@ -349,11 +242,11 @@ router.post('/:id/confirm', authenticate, authorize(['admin', 'manager', 'sales'
 
     const insufficientStock = [];
     for (const item of itemsResult.rows) {
-      if (item.stock_quantity < item.quantity) {
+      if (parseFloat(item.quantity_in_stock) < parseFloat(item.quantity)) {
         insufficientStock.push({
           product: item.name,
           required: item.quantity,
-          available: item.stock_quantity
+          available: item.quantity_in_stock
         });
       }
     }
@@ -369,8 +262,8 @@ router.post('/:id/confirm', authenticate, authorize(['admin', 'manager', 'sales'
     // Update order status
     const result = await client.query(`
       UPDATE sales_orders 
-      SET status = 'confirmed', confirmed_at = CURRENT_TIMESTAMP
-      WHERE id = $1 AND status = 'draft'
+      SET status = 'CONFIRMED', confirmed_at = CURRENT_TIMESTAMP
+      WHERE id = $1 AND status = 'PENDING'
       RETURNING *
     `, [id]);
 
@@ -380,7 +273,6 @@ router.post('/:id/confirm', authenticate, authorize(['admin', 'manager', 'sales'
     }
 
     await client.query('COMMIT');
-
     res.json({
       message: 'Sales order confirmed successfully',
       sales_order: result.rows[0]
@@ -388,13 +280,13 @@ router.post('/:id/confirm', authenticate, authorize(['admin', 'manager', 'sales'
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Error confirming sales order:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: 'Internal server error', details: error.message });
   } finally {
     client.release();
   }
 });
 
-// Ship sales order (create stock movements)
+// Ship sales order
 router.post('/:id/ship', authenticate, authorize(['admin', 'manager', 'warehouse']), async (req, res) => {
   const client = await pool.connect();
   try {
@@ -409,50 +301,44 @@ router.post('/:id/ship', authenticate, authorize(['admin', 'manager', 'warehouse
       [id]
     );
 
-    // Create stock movements and update stock
     for (const item of itemsResult.rows) {
-      // Check stock availability
+      // Check stock
       const stockCheck = await client.query(
-        'SELECT stock_quantity FROM products WHERE id = $1',
+        'SELECT quantity_in_stock FROM products WHERE id = $1',
         [item.product_id]
       );
 
-      if (stockCheck.rows[0].stock_quantity < item.quantity) {
+      if (parseFloat(stockCheck.rows[0].quantity_in_stock) < parseFloat(item.quantity)) {
         await client.query('ROLLBACK');
         return res.status(400).json({ error: 'Insufficient stock for shipping' });
       }
 
       // Create stock movement
+      const movementRef = `SHIP-${id}-${item.product_id}`;
       await client.query(`
         INSERT INTO stock_movements (
-          product_id, movement_type, quantity, unit_price,
-          reference_type, reference_id, movement_date,
-          notes, created_by, status
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          movement_type, reference_number, product_id, quantity, 
+          unit_price, related_document_type, related_document_id, 
+          movement_date, notes, created_by, is_approved, approved_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, CURRENT_TIMESTAMP)
       `, [
-        item.product_id,
-        'sales_shipment',
-        -item.quantity, // Negative for outgoing
-        item.unit_price,
-        'sales_order',
-        id,
-        shipping_date,
-        `Shipped for order ${id}`,
-        req.user.userId,
-        'approved'
+        'OUT', movementRef, item.product_id, -item.quantity,
+        item.unit_price, 'SALES_ORDER', id,
+        shipping_date || new Date(), `Shipped for order ${id}`,
+        req.user.userId, true
       ]);
 
       // Update product stock
       await client.query(`
         UPDATE products 
-        SET stock_quantity = stock_quantity - $1
+        SET quantity_in_stock = quantity_in_stock - $1
         WHERE id = $2
       `, [item.quantity, item.product_id]);
 
       // Update item shipped quantity
       await client.query(`
         UPDATE sales_order_items
-        SET shipped_quantity = shipped_quantity + $1
+        SET shipped_quantity = COALESCE(shipped_quantity, 0) + $1
         WHERE id = $2
       `, [item.quantity, item.id]);
     }
@@ -460,69 +346,20 @@ router.post('/:id/ship', authenticate, authorize(['admin', 'manager', 'warehouse
     // Update order status
     await client.query(`
       UPDATE sales_orders
-      SET status = 'shipped', 
+      SET status = 'SHIPPED', 
           shipped_at = CURRENT_TIMESTAMP,
           tracking_number = $1
       WHERE id = $2
     `, [tracking_number, id]);
 
     await client.query('COMMIT');
-
     res.json({ message: 'Sales order shipped successfully' });
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Error shipping sales order:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: 'Internal server error', details: error.message });
   } finally {
     client.release();
-  }
-});
-
-// Cancel sales order
-router.post('/:id/cancel', authenticate, authorize(['admin', 'manager']), async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { reason } = req.body;
-
-    const result = await pool.query(`
-      UPDATE sales_orders
-      SET status = 'cancelled', notes = COALESCE(notes || ' | ', '') || 'Cancelled: ' || $1
-      WHERE id = $2 AND status NOT IN ('shipped', 'delivered', 'cancelled')
-      RETURNING *
-    `, [reason || 'No reason provided', id]);
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Order not found or cannot be cancelled' });
-    }
-
-    res.json({
-      message: 'Sales order cancelled successfully',
-      sales_order: result.rows[0]
-    });
-  } catch (error) {
-    console.error('Error cancelling sales order:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// Delete sales order (only drafts)
-router.delete('/:id', authenticate, authorize(['admin']), async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const result = await pool.query(
-      'DELETE FROM sales_orders WHERE id = $1 AND status = \'draft\' RETURNING *',
-      [id]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Order not found or cannot be deleted' });
-    }
-
-    res.json({ message: 'Sales order deleted successfully' });
-  } catch (error) {
-    console.error('Error deleting sales order:', error);
-    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
