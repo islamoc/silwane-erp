@@ -15,12 +15,12 @@ const { authenticate, authorize } = require('../middleware/auth');
 router.get('/transactions', authenticate, async (req, res) => {
   try {
     const { 
-      type,
-      category,
-      start_date,
-      end_date,
+      type, 
+      category, 
+      start_date, 
+      end_date, 
       search,
-      page = 1,
+      page = 1, 
       limit = 20,
       sort_by = 'transaction_date',
       sort_order = 'DESC'
@@ -36,60 +36,48 @@ router.get('/transactions', authenticate, async (req, res) => {
       LEFT JOIN users u ON t.created_by = u.id
       WHERE 1=1
     `;
+
     const params = [];
     let paramCount = 1;
 
     if (type) {
-      query += \` AND t.transaction_type = $\${paramCount}\`;
-      params.push(type.toUpperCase());
+      query += ` AND t.transaction_type = $${paramCount}`;
+      params.push(type);
       paramCount++;
     }
 
     if (category) {
-      query += \` AND (t.category = $\${paramCount} OR t.subcategory = $\${paramCount})\`;
+      query += ` AND t.category = $${paramCount}`;
       params.push(category);
       paramCount++;
     }
 
     if (start_date) {
-      query += \` AND t.transaction_date >= $\${paramCount}\`;
+      query += ` AND t.transaction_date >= $${paramCount}`;
       params.push(start_date);
       paramCount++;
     }
 
     if (end_date) {
-      query += \` AND t.transaction_date <= $\${paramCount}\`;
+      query += ` AND t.transaction_date <= $${paramCount}`;
       params.push(end_date);
       paramCount++;
     }
 
     if (search) {
-      query += \` AND (t.description ILIKE $\${paramCount} OR t.reference_number ILIKE $\${paramCount} OR t.transaction_number ILIKE $\${paramCount})\`;
-      params.push(\`%\${search}%\`);
+      query += ` AND (t.transaction_number ILIKE $${paramCount} OR t.description ILIKE $${paramCount})`;
+      params.push(`%${search}%`);
       paramCount++;
     }
 
-    const allowedSortFields = ['transaction_date', 'amount', 'transaction_number', 'created_at'];
-    const finalSortBy = allowedSortFields.includes(sort_by) ? sort_by : 'transaction_date';
-    const finalSortOrder = sort_order.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
-
-    query += \` ORDER BY t.\${finalSortBy} \${finalSortOrder}\`;
-    query += \` LIMIT $\${paramCount} OFFSET $\${paramCount + 1}\`;
+    query += ` ORDER BY t.${sort_by} ${sort_order}`;
+    query += ` LIMIT $${paramCount} OFFSET $${paramCount + 1}`;
     params.push(limit, (page - 1) * limit);
 
     const result = await pool.query(query, params);
 
-    const balanceResult = await pool.query(\`
-      SELECT 
-        SUM(CASE WHEN transaction_type = 'INCOME' THEN amount ELSE 0 END) as total_income,
-        SUM(CASE WHEN transaction_type = 'EXPENSE' THEN amount ELSE 0 END) as total_expense,
-        SUM(CASE WHEN transaction_type = 'INCOME' THEN amount ELSE -amount END) as balance
-      FROM financial_transactions
-    \`);
-
     res.json({
       transactions: result.rows,
-      balance: balanceResult.rows[0],
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -102,29 +90,7 @@ router.get('/transactions', authenticate, async (req, res) => {
   }
 });
 
-// Get transaction by ID
-router.get('/transactions/:id', authenticate, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const result = await pool.query(\`
-      SELECT 
-        t.*,
-        u.username as created_by_username
-      FROM financial_transactions t
-      LEFT JOIN users u ON t.created_by = u.id
-      WHERE t.id = $1
-    \`, [id]);
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Transaction not found' });
-    }
-    res.json(result.rows[0]);
-  } catch (error) {
-    console.error('Error fetching transaction:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// Create transaction
+// Create new transaction
 router.post('/transactions', authenticate, authorize(['admin', 'manager', 'finance']), async (req, res) => {
   try {
     const {
@@ -144,17 +110,17 @@ router.post('/transactions', authenticate, authorize(['admin', 'manager', 'finan
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    const result = await pool.query(\`
+    const result = await pool.query(`
       INSERT INTO financial_transactions (
-        transaction_number, transaction_type, amount, category, subcategory, 
+        transaction_number, transaction_type, amount, category, subcategory,
         transaction_date, payment_method, reference_number, description, notes, created_by
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       RETURNING *
-    \`, [
-      transaction_number || \`TRX-\${Date.now()}\`, 
-      transaction_type.toUpperCase(), 
-      amount, category, subcategory, 
-      transaction_date, payment_method, reference_number, description, notes, req.user.userId
+    `, [
+      transaction_number || `TRX-${Date.now()}`,
+      transaction_type.toUpperCase(),
+      amount, category, subcategory,
+      transaction_date, payment_method, reference_number, description, notes, req.user.id
     ]);
 
     res.status(201).json({
@@ -173,7 +139,7 @@ router.post('/transactions', authenticate, authorize(['admin', 'manager', 'finan
 router.get('/vouchers', authenticate, async (req, res) => {
   try {
     const { status, page = 1, limit = 20 } = req.query;
-    let query = \`
+    let query = `
       SELECT 
         v.*,
         u.username as created_by_username,
@@ -181,18 +147,18 @@ router.get('/vouchers', authenticate, async (req, res) => {
       FROM vouchers v
       LEFT JOIN users u ON v.created_by = u.id
       WHERE 1=1
-    \`;
+    `;
     const params = [];
     let paramCount = 1;
 
     if (status) {
-      query += \` AND v.status = $\${paramCount}\`;
+      query += ` AND v.status = $${paramCount}`;
       params.push(status);
       paramCount++;
     }
 
     query += ' ORDER BY v.created_at DESC';
-    query += \` LIMIT $\${paramCount} OFFSET $\${paramCount + 1}\`;
+    query += ` LIMIT $${paramCount} OFFSET $${paramCount + 1}`;
     params.push(limit, (page - 1) * limit);
 
     const result = await pool.query(query, params);
@@ -207,11 +173,11 @@ router.get('/vouchers', authenticate, async (req, res) => {
     });
   } catch (error) {
     console.error('Error fetching vouchers:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: 'Internal server error', details: error.message });
   }
 });
 
-// Create voucher
+// Create new voucher
 router.post('/vouchers', authenticate, authorize(['admin', 'manager', 'finance']), async (req, res) => {
   try {
     const {
@@ -219,26 +185,31 @@ router.post('/vouchers', authenticate, authorize(['admin', 'manager', 'finance']
       voucher_type,
       amount,
       voucher_date,
+      party_type,
+      party_id,
       party_name,
+      payment_method,
       description,
       notes
     } = req.body;
 
-    if (!amount || !voucher_date || !party_name || !voucher_type) {
+    if (!voucher_type || !amount || !voucher_date) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    const result = await pool.query(\`
+    const result = await pool.query(`
       INSERT INTO vouchers (
-        voucher_number, voucher_type, amount, voucher_date, party_name,
+        voucher_number, voucher_type, amount, voucher_date,
+        party_type, party_id, party_name, payment_method,
         description, notes, created_by
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       RETURNING *
-    \`, [
-      voucher_number || \`VCH-\${Date.now()}\`, 
-      voucher_type.toUpperCase(), 
-      amount, voucher_date, party_name, 
-      description, notes, req.user.userId
+    `, [
+      voucher_number || `VOU-${Date.now()}`,
+      voucher_type.toUpperCase(),
+      amount, voucher_date,
+      party_type, party_id, party_name, payment_method,
+      description, notes, req.user.id
     ]);
 
     res.status(201).json({
@@ -248,20 +219,6 @@ router.post('/vouchers', authenticate, authorize(['admin', 'manager', 'finance']
   } catch (error) {
     console.error('Error creating voucher:', error);
     res.status(500).json({ error: 'Internal server error', details: error.message });
-  }
-});
-
-// ============ PAYMENT TERMS MODELS (N75) ============
-
-router.get('/payment-terms', authenticate, async (req, res) => {
-  try {
-    const result = await pool.query(
-      'SELECT * FROM payment_schedules WHERE is_template = true ORDER BY template_name ASC'
-    );
-    res.json({ payment_terms: result.rows });
-  } catch (error) {
-    console.error('Error fetching payment terms:', error);
-    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
