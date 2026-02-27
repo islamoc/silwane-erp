@@ -188,7 +188,7 @@ router.post('/', authenticate, authorize(['admin', 'manager', 'sales']), async (
     `, [
       orderNumber, customer_id, order_date, expected_delivery_date,
       'PENDING', subtotal, tax_amount, total_amount,
-      payment_terms, shipping_address, notes, req.user.userId
+      payment_terms, shipping_address, notes, req.user.id
     ]);
 
     const orderId = orderResult.rows[0].id;
@@ -325,7 +325,7 @@ router.post('/:id/ship', authenticate, authorize(['admin', 'manager', 'warehouse
         'OUT', movementRef, item.product_id, -item.quantity,
         item.unit_price, 'SALES_ORDER', id,
         shipping_date || new Date(), `Shipped for order ${id}`,
-        req.user.userId, true
+        req.user.id, true
       ]);
 
       // Update product stock
