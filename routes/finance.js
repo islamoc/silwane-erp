@@ -7,7 +7,7 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../config/database');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, authorize, authorizeRoles } = require('../middleware/auth');
 
 // ============ TREASURY MANAGEMENT (G26) ============
 
@@ -26,6 +26,10 @@ router.get('/transactions', authenticate, async (req, res) => {
       sort_order = 'DESC'
     } = req.query;
 
+    const parsedPage = parseInt(page);
+    const parsedLimit = parseInt(limit);
+    const offset = (parsedPage - 1) * parsedLimit;
+
     let query = `
       SELECT 
         t.*,
@@ -36,52 +40,57 @@ router.get('/transactions', authenticate, async (req, res) => {
       LEFT JOIN users u ON t.created_by = u.id
       WHERE 1=1
     `;
-
+    
     const params = [];
     let paramCount = 1;
 
     if (type) {
-      query += ` AND t.transaction_type = $${paramCount}`;
-      params.push(type);
+      query += \` AND t.transaction_type = $\\${paramCount}\`;
+      params.push(type.toUpperCase());
       paramCount++;
     }
 
     if (category) {
-      query += ` AND t.category = $${paramCount}`;
+      query += \` AND t.category = $\\${paramCount}\`;
       params.push(category);
       paramCount++;
     }
 
     if (start_date) {
-      query += ` AND t.transaction_date >= $${paramCount}`;
+      query += \` AND t.transaction_date >= $\\${paramCount}\`;
       params.push(start_date);
       paramCount++;
     }
 
     if (end_date) {
-      query += ` AND t.transaction_date <= $${paramCount}`;
+      query += \` AND t.transaction_date <= $\\${paramCount}\`;
       params.push(end_date);
       paramCount++;
     }
 
     if (search) {
-      query += ` AND (t.transaction_number ILIKE $${paramCount} OR t.description ILIKE $${paramCount})`;
-      params.push(`%${search}%`);
+      query += \` AND (t.transaction_number ILIKE $\\${paramCount} OR t.description ILIKE $\\${paramCount})\`;
+      params.push(\\`%\\${search}%\\`);
       paramCount++;
     }
 
-    query += ` ORDER BY t.${sort_by} ${sort_order}`;
-    query += ` LIMIT $${paramCount} OFFSET $${paramCount + 1}`;
-    params.push(limit, (page - 1) * limit);
+    // Sorting validation
+    const allowedSortFields = ['transaction_date', 'amount', 'transaction_number', 'created_at'];
+    const finalSortBy = allowedSortFields.includes(sort_by) ? sort_by : 'transaction_date';
+    const finalSortOrder = sort_order.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+
+    query += \` ORDER BY t.\\${finalSortBy} \\${finalSortOrder}\`;
+    query += \` LIMIT $\\${paramCount} OFFSET $\\${paramCount + 1}\`;
+    params.push(parsedLimit, offset);
 
     const result = await pool.query(query, params);
 
     res.json({
       transactions: result.rows,
       pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
-        total: result.rows[0]?.total_count || 0
+        page: parsedPage,
+        limit: parsedLimit,
+        total: result.rows.length > 0 ? parseInt(result.rows[0].total_count) : 0
       }
     });
   } catch (error) {
@@ -91,7 +100,7 @@ router.get('/transactions', authenticate, async (req, res) => {
 });
 
 // Create new transaction
-router.post('/transactions', authenticate, authorize(['admin', 'manager', 'finance']), async (req, res) => {
+router.post('/transactions', authenticate, authorizeRoles('admin', 'manager', 'finance'), async (req, res) => {
   try {
     const {
       transaction_number,
@@ -110,14 +119,14 @@ router.post('/transactions', authenticate, authorize(['admin', 'manager', 'finan
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    const result = await pool.query(`
+    const result = await pool.query(\`
       INSERT INTO financial_transactions (
         transaction_number, transaction_type, amount, category, subcategory,
         transaction_date, payment_method, reference_number, description, notes, created_by
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       RETURNING *
-    `, [
-      transaction_number || `TRX-${Date.now()}`,
+    \`, [
+      transaction_number || \`TRX-\\${Date.now()}\`,
       transaction_type.toUpperCase(),
       amount, category, subcategory,
       transaction_date, payment_method, reference_number, description, notes, req.user.id
@@ -139,7 +148,12 @@ router.post('/transactions', authenticate, authorize(['admin', 'manager', 'finan
 router.get('/vouchers', authenticate, async (req, res) => {
   try {
     const { status, page = 1, limit = 20 } = req.query;
-    let query = `
+    
+    const parsedPage = parseInt(page);
+    const parsedLimit = parseInt(limit);
+    const offset = (parsedPage - 1) * parsedLimit;
+
+    let query = \`
       SELECT 
         v.*,
         u.username as created_by_username,
@@ -147,28 +161,29 @@ router.get('/vouchers', authenticate, async (req, res) => {
       FROM vouchers v
       LEFT JOIN users u ON v.created_by = u.id
       WHERE 1=1
-    `;
+    \`;
+    
     const params = [];
     let paramCount = 1;
 
     if (status) {
-      query += ` AND v.status = $${paramCount}`;
-      params.push(status);
+      query += \\` AND v.status = $\\${paramCount}\\`;
+      params.push(status.toUpperCase());
       paramCount++;
     }
 
     query += ' ORDER BY v.created_at DESC';
-    query += ` LIMIT $${paramCount} OFFSET $${paramCount + 1}`;
-    params.push(limit, (page - 1) * limit);
+    query += \\` LIMIT $\\${paramCount} OFFSET $\\${paramCount + 1}\\`;
+    params.push(parsedLimit, offset);
 
     const result = await pool.query(query, params);
 
     res.json({
       vouchers: result.rows,
       pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
-        total: result.rows[0]?.total_count || 0
+        page: parsedPage,
+        limit: parsedLimit,
+        total: result.rows.length > 0 ? parseInt(result.rows[0].total_count) : 0
       }
     });
   } catch (error) {
@@ -178,7 +193,7 @@ router.get('/vouchers', authenticate, async (req, res) => {
 });
 
 // Create new voucher
-router.post('/vouchers', authenticate, authorize(['admin', 'manager', 'finance']), async (req, res) => {
+router.post('/vouchers', authenticate, authorizeRoles('admin', 'manager', 'finance'), async (req, res) => {
   try {
     const {
       voucher_number,
@@ -197,15 +212,15 @@ router.post('/vouchers', authenticate, authorize(['admin', 'manager', 'finance']
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    const result = await pool.query(`
+    const result = await pool.query(\`
       INSERT INTO vouchers (
         voucher_number, voucher_type, amount, voucher_date,
         party_type, party_id, party_name, payment_method,
         description, notes, created_by
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       RETURNING *
-    `, [
-      voucher_number || `VOU-${Date.now()}`,
+    \`, [
+      voucher_number || \`VOU-\\${Date.now()}\`,
       voucher_type.toUpperCase(),
       amount, voucher_date,
       party_type, party_id, party_name, payment_method,
