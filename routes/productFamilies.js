@@ -10,14 +10,12 @@ const logger = require('../config/logger');
  */
 
 /**
- * @route   GET /api/product-families
- * @desc    Get all product families (hierarchical)
- * @access  Private
+ * @route GET /api/product-families
+ * @desc Get all product families (hierarchical)
  */
 router.get('/', authenticate, async (req, res, next) => {
   try {
     const { flat = false } = req.query;
-
     const result = await query(
       `SELECT pf.*, 
               parent.name as parent_name,
@@ -33,7 +31,7 @@ router.get('/', authenticate, async (req, res, next) => {
     if (flat === 'true') {
       return res.json({
         success: true,
-        data: result.rows
+        families: result.rows
       });
     }
 
@@ -48,10 +46,9 @@ router.get('/', authenticate, async (req, res, next) => {
     };
 
     const tree = buildTree(result.rows);
-
     res.json({
       success: true,
-      data: tree
+      families: tree
     });
   } catch (error) {
     next(error);
@@ -59,9 +56,7 @@ router.get('/', authenticate, async (req, res, next) => {
 });
 
 /**
- * @route   GET /api/product-families/:id
- * @desc    Get single product family
- * @access  Private
+ * @route GET /api/product-families/:id
  */
 router.get('/:id', authenticate, async (req, res, next) => {
   try {
@@ -88,7 +83,7 @@ router.get('/:id', authenticate, async (req, res, next) => {
 
     res.json({
       success: true,
-      data: result.rows[0]
+      family: result.rows[0]
     });
   } catch (error) {
     next(error);
@@ -96,14 +91,11 @@ router.get('/:id', authenticate, async (req, res, next) => {
 });
 
 /**
- * @route   POST /api/product-families
- * @desc    Create new product family
- * @access  Private
+ * @route POST /api/product-families
  */
 router.post('/', authenticate, async (req, res, next) => {
   try {
     const { code, name, parentId, description } = req.body;
-
     if (!code || !name) {
       return res.status(400).json({
         success: false,
@@ -111,23 +103,19 @@ router.post('/', authenticate, async (req, res, next) => {
       });
     }
 
-    // Determine level and path
     let level = 1;
     let path = `/${code}`;
-
     if (parentId) {
       const parentResult = await query(
         'SELECT level, path FROM product_families WHERE id = $1',
         [parentId]
       );
-
       if (parentResult.rows.length === 0) {
         return res.status(400).json({
           success: false,
           message: 'Parent family not found'
         });
       }
-
       const parent = parentResult.rows[0];
       level = parent.level + 1;
       path = `${parent.path}/${code}`;
@@ -145,7 +133,7 @@ router.post('/', authenticate, async (req, res, next) => {
     res.status(201).json({
       success: true,
       message: 'Product family created successfully',
-      data: result.rows[0]
+      family: result.rows[0]
     });
   } catch (error) {
     next(error);
@@ -153,22 +141,19 @@ router.post('/', authenticate, async (req, res, next) => {
 });
 
 /**
- * @route   PUT /api/product-families/:id
- * @desc    Update product family
- * @access  Private
+ * @route PUT /api/product-families/:id
  */
 router.put('/:id', authenticate, async (req, res, next) => {
   try {
     const { code, name, description, isActive } = req.body;
-
     const result = await query(
       `UPDATE product_families SET
         code = COALESCE($1, code),
         name = COALESCE($2, name),
         description = COALESCE($3, description),
         is_active = COALESCE($4, is_active)
-       WHERE id = $5
-       RETURNING *`,
+      WHERE id = $5
+      RETURNING *`,
       [code, name, description, isActive, req.params.id]
     );
 
@@ -184,7 +169,7 @@ router.put('/:id', authenticate, async (req, res, next) => {
     res.json({
       success: true,
       message: 'Product family updated successfully',
-      data: result.rows[0]
+      family: result.rows[0]
     });
   } catch (error) {
     next(error);
@@ -192,35 +177,29 @@ router.put('/:id', authenticate, async (req, res, next) => {
 });
 
 /**
- * @route   DELETE /api/product-families/:id
- * @desc    Delete product family
- * @access  Private (Admin)
+ * @route DELETE /api/product-families/:id
  */
 router.delete('/:id', authenticate, async (req, res, next) => {
   try {
-    // Check if family has products
     const productCheck = await query(
       'SELECT COUNT(*) FROM products WHERE family_id = $1',
       [req.params.id]
     );
-
     if (parseInt(productCheck.rows[0].count) > 0) {
       return res.status(400).json({
         success: false,
-        message: 'Cannot delete family with associated products. Please reassign or delete products first.'
+        message: 'Cannot delete family with associated products.'
       });
     }
 
-    // Check if family has children
     const childCheck = await query(
       'SELECT COUNT(*) FROM product_families WHERE parent_id = $1',
       [req.params.id]
     );
-
     if (parseInt(childCheck.rows[0].count) > 0) {
       return res.status(400).json({
         success: false,
-        message: 'Cannot delete family with child families. Please delete or reassign child families first.'
+        message: 'Cannot delete family with child families.'
       });
     }
 
