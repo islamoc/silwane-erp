@@ -4,7 +4,7 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../config/database');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, authorize, authorizeRoles } = require('../middleware/auth');
 
 // Get all purchases with filters
 router.get('/', authenticate, async (req, res) => {
@@ -21,6 +21,10 @@ router.get('/', authenticate, async (req, res) => {
       sort_order = 'DESC'
     } = req.query;
 
+    const parsedPage = parseInt(page);
+    const parsedLimit = parseInt(limit);
+    const offset = (parsedPage - 1) * parsedLimit;
+
     let query = `
       SELECT 
         p.*,
@@ -34,32 +38,37 @@ router.get('/', authenticate, async (req, res) => {
       LEFT JOIN users u ON p.created_by = u.id
       WHERE 1=1
     `;
+    
     const params = [];
     let paramCount = 1;
 
     if (status) {
-      query += \` AND p.status = $\${paramCount}\`;
+      query += \` AND p.status = $\\${paramCount}\`;
       params.push(status.toUpperCase());
       paramCount++;
     }
+
     if (supplier_id) {
-      query += \` AND p.supplier_id = $\${paramCount}\`;
+      query += \` AND p.supplier_id = $\\${paramCount}\`;
       params.push(supplier_id);
       paramCount++;
     }
+
     if (start_date) {
-      query += \` AND p.order_date >= $\${paramCount}\`;
+      query += \` AND p.order_date >= $\\${paramCount}\`;
       params.push(start_date);
       paramCount++;
     }
+
     if (end_date) {
-      query += \` AND p.order_date <= $\${paramCount}\`;
+      query += \` AND p.order_date <= $\\${paramCount}\`;
       params.push(end_date);
       paramCount++;
     }
+
     if (search) {
-      query += \` AND (p.po_number ILIKE $\${paramCount} OR s.name ILIKE $\${paramCount})\`;
-      params.push(\`%\${search}%\`);
+      query += \` AND (p.po_number ILIKE $\\${paramCount} OR s.name ILIKE $\\${paramCount})\`;
+      params.push(\\`%\\${search}%\\`);
       paramCount++;
     }
 
@@ -67,18 +76,18 @@ router.get('/', authenticate, async (req, res) => {
     const finalSortBy = allowedSortFields.includes(sort_by) ? sort_by : 'created_at';
     const finalSortOrder = sort_order.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
 
-    query += \` ORDER BY p.\${finalSortBy} \${finalSortOrder}\`;
-    query += \` LIMIT $\${paramCount} OFFSET $\${paramCount + 1}\`;
-    params.push(limit, (page - 1) * limit);
+    query += \` ORDER BY p.\\${finalSortBy} \\${finalSortOrder}\`;
+    query += \` LIMIT $\\${paramCount} OFFSET $\\${paramCount + 1}\`;
+    params.push(parsedLimit, offset);
 
     const result = await pool.query(query, params);
 
     res.json({
       purchases: result.rows,
       pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
-        total: result.rows[0]?.total_count || 0
+        page: parsedPage,
+        limit: parsedLimit,
+        total: result.rows.length > 0 ? parseInt(result.rows[0].total_count) : 0
       }
     });
   } catch (error) {
@@ -92,7 +101,6 @@ router.get('/:id', authenticate, async (req, res) => {
   try {
     const { id } = req.params;
     
-    // Get purchase header
     const purchaseResult = await pool.query(\`
       SELECT 
         p.*,
@@ -111,7 +119,6 @@ router.get('/:id', authenticate, async (req, res) => {
       return res.status(404).json({ error: 'Purchase not found' });
     }
 
-    // Get purchase items
     const itemsResult = await pool.query(\`
       SELECT 
         pi.*,
@@ -135,7 +142,7 @@ router.get('/:id', authenticate, async (req, res) => {
 });
 
 // Create new purchase
-router.post('/', authenticate, authorize(['admin', 'manager', 'purchasing']), async (req, res) => {
+router.post('/', authenticate, authorizeRoles('admin', 'manager', 'purchasing'), async (req, res) => {
   const client = await pool.getClient();
   try {
     const {
@@ -154,23 +161,21 @@ router.post('/', authenticate, authorize(['admin', 'manager', 'purchasing']), as
 
     await client.query('BEGIN');
 
-    // Generate purchase number
     const numberResult = await client.query(\`
       SELECT COALESCE(MAX(CAST(SUBSTRING(po_number FROM 4) AS INTEGER)), 0) + 1 as next_number
       FROM purchase_orders
       WHERE po_number LIKE 'PO-%'
     \`);
-    const purchaseNumber = \`PO-\${String(numberResult.rows[0].next_number).padStart(6, '0')}\`;
+    const nextNum = numberResult.rows[0].next_number;
+    const purchaseNumber = \`PO-\\${String(nextNum).padStart(6, '0')}\`;
 
-    // Calculate totals
     let subtotal = 0;
     items.forEach(item => {
       subtotal += parseFloat(item.quantity) * parseFloat(item.unit_price);
     });
-    const tax_amount = subtotal * 0.19; // 19% VAT
+    const tax_amount = subtotal * 0.19;
     const total_amount = subtotal + tax_amount;
 
-    // Insert purchase header
     const purchaseResult = await client.query(\`
       INSERT INTO purchase_orders (
         po_number, supplier_id, order_date, expected_delivery_date,
@@ -181,12 +186,11 @@ router.post('/', authenticate, authorize(['admin', 'manager', 'purchasing']), as
     \`, [
       purchaseNumber, supplier_id, order_date, expected_delivery_date,
       'DRAFT', subtotal, tax_amount, total_amount,
-      payment_terms, delivery_address, notes, req.user.userId
+      payment_terms, delivery_address, notes, req.user.id
     ]);
 
     const purchaseId = purchaseResult.rows[0].id;
 
-    // Insert purchase items
     for (const item of items) {
       await client.query(\`
         INSERT INTO purchase_order_items (
@@ -215,7 +219,7 @@ router.post('/', authenticate, authorize(['admin', 'manager', 'purchasing']), as
 });
 
 // Cancel purchase
-router.post('/:id/cancel', authenticate, authorize(['admin', 'manager']), async (req, res) => {
+router.post('/:id/cancel', authenticate, authorizeRoles('admin', 'manager'), async (req, res) => {
   try {
     const { id } = req.params;
     const result = await pool.query(\`
