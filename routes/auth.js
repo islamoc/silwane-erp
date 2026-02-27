@@ -1,38 +1,134 @@
 const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcryptjs');
-const { query } = require('../config/database');
-const { generateToken } = require('../utils/generateToken');
+const db = require('../config/database');
+const { generateToken, generateRefreshToken } = require('../utils/generateToken');
 const logger = require('../config/logger');
 const { authenticate } = require('../middleware/auth');
 
 /**
- * @route   POST /api/auth/register
- * @desc    Register new user
- * @access  Public
+ * @route  POST /api/auth/login
+ * @desc   Login with email (or username) + password
+ * @access Public
+ */
+router.post('/login', async (req, res, next) => {
+  try {
+    const { email, username, password } = req.body;
+
+    // Accept either email or username field
+    const identifier = email || username;
+
+    if (!identifier || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide email/username and password.'
+      });
+    }
+
+    // Fetch user by email OR username, joining role
+    const result = await db.query(
+      `SELECT u.id, u.username, u.email, u.password_hash,
+              u.first_name, u.last_name, u.is_active,
+              r.name AS role, r.permissions
+       FROM users u
+       LEFT JOIN user_roles r ON u.role_id = r.id
+       WHERE u.email = $1 OR u.username = $1`,
+      [identifier]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid email or password.'
+      });
+    }
+
+    const user = result.rows[0];
+
+    // Check account status
+    if (!user.is_active) {
+      return res.status(403).json({
+        success: false,
+        message: 'Your account has been deactivated. Contact administrator.'
+      });
+    }
+
+    // Verify password against bcrypt hash
+    const isPasswordValid = await bcrypt.compare(password, user.password_hash);
+    if (!isPasswordValid) {
+      logger.warn('Failed login attempt', { identifier });
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid email or password.'
+      });
+    }
+
+    // Update last login timestamp
+    await db.query(
+      'UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = $1',
+      [user.id]
+    );
+
+    // Build user payload for token
+    const userPayload = {
+      id: user.id,
+      email: user.email,
+      role: user.role || 'viewer'
+    };
+
+    const token = generateToken(userPayload);
+    const refreshToken = generateRefreshToken(userPayload);
+
+    logger.info('User logged in', { userId: user.id, email: user.email });
+
+    res.json({
+      success: true,
+      message: 'Login successful.',
+      data: {
+        user: {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          firstName: user.first_name,
+          lastName: user.last_name,
+          role: user.role || 'viewer',
+          permissions: user.permissions || {}
+        },
+        token,
+        refreshToken
+      }
+    });
+  } catch (error) {
+    logger.error('Login error', error);
+    next(error);
+  }
+});
+
+/**
+ * @route  POST /api/auth/register
+ * @desc   Register a new user
+ * @access Public
  */
 router.post('/register', async (req, res, next) => {
   try {
     const { username, email, password, firstName, lastName, roleId } = req.body;
 
-    // Validation
     if (!username || !email || !password) {
       return res.status(400).json({
         success: false,
-        message: 'Please provide username, email and password'
+        message: 'Please provide username, email and password.'
       });
     }
 
-    // Check if user already exists
-    const existingUser = await query(
+    // Check uniqueness
+    const existing = await db.query(
       'SELECT id FROM users WHERE username = $1 OR email = $2',
       [username, email]
     );
-
-    if (existingUser.rows.length > 0) {
+    if (existing.rows.length > 0) {
       return res.status(400).json({
         success: false,
-        message: 'User with this username or email already exists'
+        message: 'A user with that username or email already exists.'
       });
     }
 
@@ -40,146 +136,78 @@ router.post('/register', async (req, res, next) => {
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(password, salt);
 
-    // Insert user
-    const result = await query(
+    // Resolve roleId — default to viewer role if not provided
+    let resolvedRoleId = roleId;
+    if (!resolvedRoleId) {
+      const roleResult = await db.query(
+        'SELECT id FROM user_roles WHERE name = $1',
+        ['viewer']
+      );
+      resolvedRoleId = roleResult.rows[0]?.id || 7;
+    }
+
+    const result = await db.query(
       `INSERT INTO users (username, email, password_hash, first_name, last_name, role_id)
        VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING id, username, email, first_name, last_name, is_active, created_at`,
-      [username, email, passwordHash, firstName, lastName, roleId || 8] // Default to 'User' role
+      [username, email, passwordHash, firstName || '', lastName || '', resolvedRoleId]
     );
 
-    const user = result.rows[0];
+    const newUser = result.rows[0];
 
-    // Generate token
-    const token = generateToken(user.id);
+    // Get role name for token
+    const roleRow = await db.query('SELECT name FROM user_roles WHERE id = $1', [resolvedRoleId]);
+    const roleName = roleRow.rows[0]?.name || 'viewer';
 
-    logger.info('User registered successfully', { userId: user.id, username: user.username });
+    const userPayload = { id: newUser.id, email: newUser.email, role: roleName };
+    const token = generateToken(userPayload);
+
+    logger.info('User registered', { userId: newUser.id, email: newUser.email });
 
     res.status(201).json({
       success: true,
-      message: 'User registered successfully',
+      message: 'User registered successfully.',
       data: {
         user: {
-          id: user.id,
-          username: user.username,
-          email: user.email,
-          firstName: user.first_name,
-          lastName: user.last_name,
-          isActive: user.is_active
+          id: newUser.id,
+          username: newUser.username,
+          email: newUser.email,
+          firstName: newUser.first_name,
+          lastName: newUser.last_name,
+          role: roleName,
+          isActive: newUser.is_active
         },
         token
       }
     });
   } catch (error) {
+    logger.error('Registration error', error);
     next(error);
   }
 });
 
 /**
- * @route   POST /api/auth/login
- * @desc    Login user
- * @access  Public
- */
-router.post('/login', async (req, res, next) => {
-  try {
-    const { username, password } = req.body;
-
-    // Validation
-    if (!username || !password) {
-      return res.status(400).json({
-        success: false,
-        message: 'Please provide username and password'
-      });
-    }
-
-    // Get user
-    const result = await query(
-      `SELECT u.id, u.username, u.email, u.password_hash, u.first_name, u.last_name, 
-              u.is_active, r.name as role_name, r.permissions
-       FROM users u
-       LEFT JOIN user_roles r ON u.role_id = r.id
-       WHERE u.username = $1 OR u.email = $1`,
-      [username]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid credentials'
-      });
-    }
-
-    const user = result.rows[0];
-
-    // Check if user is active
-    if (!user.is_active) {
-      return res.status(403).json({
-        success: false,
-        message: 'Your account has been deactivated. Please contact administrator.'
-      });
-    }
-
-    // Verify password
-    const isPasswordValid = await bcrypt.compare(password, user.password_hash);
-
-    if (!isPasswordValid) {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid credentials'
-      });
-    }
-
-    // Update last login
-    await query(
-      'UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = $1',
-      [user.id]
-    );
-
-    // Generate token
-    const token = generateToken(user.id);
-
-    logger.info('User logged in successfully', { userId: user.id, username: user.username });
-
-    res.json({
-      success: true,
-      message: 'Login successful',
-      data: {
-        user: {
-          id: user.id,
-          username: user.username,
-          email: user.email,
-          firstName: user.first_name,
-          lastName: user.last_name,
-          role: user.role_name,
-          permissions: user.permissions
-        },
-        token
-      }
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-/**
- * @route   GET /api/auth/profile
- * @desc    Get current user profile
- * @access  Private
+ * @route  GET /api/auth/profile
+ * @desc   Get current authenticated user profile
+ * @access Private
  */
 router.get('/profile', authenticate, async (req, res, next) => {
   try {
-    const result = await query(
-      `SELECT u.id, u.username, u.email, u.first_name, u.last_name, u.phone, 
+    const result = await db.query(
+      `SELECT u.id, u.username, u.email, u.first_name, u.last_name, u.phone,
               u.address, u.avatar_url, u.preferences, u.last_login, u.created_at,
-              r.name as role_name, r.permissions
+              r.name AS role, r.permissions
        FROM users u
        LEFT JOIN user_roles r ON u.role_id = r.id
        WHERE u.id = $1`,
       [req.user.id]
     );
 
-    const user = result.rows[0];
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'User not found.' });
+    }
 
+    const user = result.rows[0];
     res.json({
       success: true,
       data: {
@@ -192,7 +220,7 @@ router.get('/profile', authenticate, async (req, res, next) => {
         address: user.address,
         avatarUrl: user.avatar_url,
         preferences: user.preferences,
-        role: user.role_name,
+        role: user.role,
         permissions: user.permissions,
         lastLogin: user.last_login,
         createdAt: user.created_at
@@ -204,34 +232,36 @@ router.get('/profile', authenticate, async (req, res, next) => {
 });
 
 /**
- * @route   PUT /api/auth/profile
- * @desc    Update current user profile
- * @access  Private
+ * @route  PUT /api/auth/profile
+ * @desc   Update authenticated user profile
+ * @access Private
  */
 router.put('/profile', authenticate, async (req, res, next) => {
   try {
-    const { firstName, lastName, phone, address, avatarUrl, preferences } = req.body;
+    const { firstName, lastName, phone, address } = req.body;
 
-    const result = await query(
-      `UPDATE users 
-       SET first_name = COALESCE($1, first_name),
-           last_name = COALESCE($2, last_name),
-           phone = COALESCE($3, phone),
-           address = COALESCE($4, address),
-           avatar_url = COALESCE($5, avatar_url),
-           preferences = COALESCE($6, preferences)
-       WHERE id = $7
-       RETURNING id, username, email, first_name, last_name, phone, address, avatar_url, preferences`,
-      [firstName, lastName, phone, address, avatarUrl, preferences, req.user.id]
+    const result = await db.query(
+      `UPDATE users
+       SET first_name  = COALESCE($1, first_name),
+           last_name   = COALESCE($2, last_name),
+           phone       = COALESCE($3, phone),
+           address     = COALESCE($4, address),
+           updated_at  = CURRENT_TIMESTAMP
+       WHERE id = $5
+       RETURNING id, username, email, first_name, last_name, phone, address`,
+      [firstName, lastName, phone, address, req.user.id]
     );
 
-    const user = result.rows[0];
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'User not found.' });
+    }
 
-    logger.info('User profile updated', { userId: user.id });
+    const user = result.rows[0];
+    logger.info('Profile updated', { userId: user.id });
 
     res.json({
       success: true,
-      message: 'Profile updated successfully',
+      message: 'Profile updated successfully.',
       data: {
         id: user.id,
         username: user.username,
@@ -239,9 +269,7 @@ router.put('/profile', authenticate, async (req, res, next) => {
         firstName: user.first_name,
         lastName: user.last_name,
         phone: user.phone,
-        address: user.address,
-        avatarUrl: user.avatar_url,
-        preferences: user.preferences
+        address: user.address
       }
     });
   } catch (error) {
@@ -250,9 +278,9 @@ router.put('/profile', authenticate, async (req, res, next) => {
 });
 
 /**
- * @route   POST /api/auth/change-password
- * @desc    Change user password
- * @access  Private
+ * @route  POST /api/auth/change-password
+ * @desc   Change authenticated user password
+ * @access Private
  */
 router.post('/change-password', authenticate, async (req, res, next) => {
   try {
@@ -261,47 +289,75 @@ router.post('/change-password', authenticate, async (req, res, next) => {
     if (!currentPassword || !newPassword) {
       return res.status(400).json({
         success: false,
-        message: 'Please provide current and new password'
+        message: 'Please provide current and new password.'
       });
     }
 
-    // Get user's current password hash
-    const result = await query(
+    if (newPassword.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: 'New password must be at least 6 characters.'
+      });
+    }
+
+    const result = await db.query(
       'SELECT password_hash FROM users WHERE id = $1',
       [req.user.id]
     );
 
-    const user = result.rows[0];
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'User not found.' });
+    }
 
-    // Verify current password
-    const isPasswordValid = await bcrypt.compare(currentPassword, user.password_hash);
-
-    if (!isPasswordValid) {
+    const isValid = await bcrypt.compare(currentPassword, result.rows[0].password_hash);
+    if (!isValid) {
       return res.status(401).json({
         success: false,
-        message: 'Current password is incorrect'
+        message: 'Current password is incorrect.'
       });
     }
 
-    // Hash new password
     const salt = await bcrypt.genSalt(10);
-    const newPasswordHash = await bcrypt.hash(newPassword, salt);
+    const newHash = await bcrypt.hash(newPassword, salt);
 
-    // Update password
-    await query(
-      'UPDATE users SET password_hash = $1 WHERE id = $2',
-      [newPasswordHash, req.user.id]
+    await db.query(
+      'UPDATE users SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      [newHash, req.user.id]
     );
 
-    logger.info('User password changed', { userId: req.user.id });
+    logger.info('Password changed', { userId: req.user.id });
 
-    res.json({
-      success: true,
-      message: 'Password changed successfully'
-    });
+    res.json({ success: true, message: 'Password changed successfully.' });
   } catch (error) {
     next(error);
   }
+});
+
+/**
+ * @route  POST /api/auth/logout
+ * @desc   Logout user (stateless - client removes token)
+ * @access Private
+ */
+router.post('/logout', authenticate, (req, res) => {
+  logger.info('User logged out', { userId: req.user.id });
+  res.json({ success: true, message: 'Logged out successfully.' });
+});
+
+/**
+ * @route  GET /api/auth/verify
+ * @desc   Verify JWT token validity
+ * @access Private
+ */
+router.get('/verify', authenticate, (req, res) => {
+  res.json({
+    success: true,
+    message: 'Token is valid.',
+    data: {
+      id: req.user.id,
+      email: req.user.email,
+      role: req.user.role
+    }
+  });
 });
 
 module.exports = router;
