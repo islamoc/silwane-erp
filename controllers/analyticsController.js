@@ -1,4 +1,4 @@
-const db = require('../database/connection');
+const db = require('../config/database');
 const ExcelJS = require('exceljs');
 
 // G31 - Product Sheet + Stock Sheet
@@ -318,56 +318,11 @@ exports.getSupplierAnalytics = async (req, res) => {
 exports.exportProductAnalytics = async (req, res) => {
   try {
     const { id } = req.params;
-
-    // Fetch product analytics data
-    const productQuery = `
-      SELECT p.*, pf.name as family_name,
-        COALESCE(SUM(CASE WHEN sm.movement_type IN ('purchase', 'adjustment_in') 
-          THEN sm.quantity ELSE -sm.quantity END), 0) as current_stock
-      FROM products p
-      LEFT JOIN product_families pf ON p.family_id = pf.id
-      LEFT JOIN stock_movements sm ON p.id = sm.product_id
-      WHERE p.id = $1
-      GROUP BY p.id, pf.name
-    `;
-
-    const productResult = await db.query(productQuery, [id]);
-
-    if (productResult.rows.length === 0) {
-      return res.status(404).json({ success: false, error: 'Product not found' });
-    }
-
-    const product = productResult.rows[0];
-
-    // Create Excel workbook
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Product Analytics');
-
-    // Add header
-    worksheet.columns = [
-      { header: 'Field', key: 'field', width: 30 },
-      { header: 'Value', key: 'value', width: 50 }
-    ];
-
-    // Add product data
-    worksheet.addRow({ field: 'Product Code', value: product.code });
-    worksheet.addRow({ field: 'Product Name', value: product.name });
-    worksheet.addRow({ field: 'Family', value: product.family_name });
-    worksheet.addRow({ field: 'Current Stock', value: product.current_stock });
-    worksheet.addRow({ field: 'Price', value: product.price });
-    worksheet.addRow({ field: 'Status', value: product.status });
-
-    // Set response headers
-    res.setHeader(
-      'Content-Type',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    );
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename=product_${product.code}_analytics.xlsx`
-    );
-
-    // Write to response
+    worksheet.addRow(['Product Analytics Export', id]);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename=product-analytics-${id}.xlsx`);
     await workbook.xlsx.write(res);
     res.end();
   } catch (error) {
@@ -375,5 +330,3 @@ exports.exportProductAnalytics = async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 };
-
-module.exports = exports;

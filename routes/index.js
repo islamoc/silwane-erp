@@ -9,10 +9,10 @@ const statisticsController = require('../controllers/statisticsController');
 const interfaceController = require('../controllers/interfaceController');
 
 // Middleware
-const { authenticateToken } = require('../middleware/auth');
+const { authenticate } = require('../middleware/auth');
 
 // Apply authentication to all routes
-router.use(authenticateToken);
+router.use(authenticate);
 
 // ============================================
 // MC01 - Stock Management Routes
