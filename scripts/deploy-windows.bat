@@ -6,20 +6,23 @@ chcp 65001 >nul
 :: ============================================================
 ::  Silwane ERP - Windows Auto Deployment Script
 ::  Author: Mennouchi Islam Azeddine
-::  Version: 2.0
-::  Features:
-::    - Prerequisite checks (Node, npm, Git, psql)
-::    - Auto JWT secret generation (via Node.js)
-::    - Auto PostgreSQL database creation
-::    - .env setup with all generated values
-::    - Frontend build (client/ or frontend/)
-::    - PM2 process management
-::    - Full deployment summary at the end
+::  Version: 3.0
+::  Steps:
+::    1. Prerequisite checks (Node, npm, Git, psql)
+::    2. Git pull latest code
+::    3. Generate secure JWT secret
+::    4. Setup .env file (interactive)
+::    5. Create PostgreSQL database + run migrations
+::    6. Install backend dependencies
+::    7. Build frontend
+::    8. Create initial admin account  <-- NEW
+::    9. Start app with PM2
+::   10. Full deployment summary
 :: ============================================================
 
 set "APP_DIR=%~dp0.."
 set "ENV_FILE=%APP_DIR%\.env"
-set "ENV_EXAMPLE=%APP_DIR%\.env.example"
+set "SCRIPTS_DIR=%APP_DIR%\scripts"
 set "PORT=5000"
 set "DB_HOST=localhost"
 set "DB_PORT=5432"
@@ -32,32 +35,29 @@ set "PSQL_AVAILABLE=0"
 set "PM2_AVAILABLE=0"
 set "DB_CREATED=0"
 set "ENV_CREATED=0"
+set "ADMIN_CREATED=0"
 
 echo.
 echo =====================================================
-echo   SILWANE ERP - Windows Auto Deployment v2.0
+echo   SILWANE ERP - Windows Auto Deployment v3.0
 echo =====================================================
 echo.
 
 :: ============================================================
 :: STEP 1 - Check prerequisites
 :: ============================================================
-echo [1/8] Checking prerequisites...
+echo [1/9] Checking prerequisites...
 
 where node >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [ERROR] Node.js is not installed or not in PATH.
-    echo         Download from: https://nodejs.org/
+    echo [ERROR] Node.js is not installed. Download: https://nodejs.org/
     pause & exit /b 1
 )
 for /f "tokens=*" %%v in ('node -v 2^>nul') do set NODE_VER=%%v
 echo     [OK] Node.js %NODE_VER%
 
 where npm >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [ERROR] npm not found.
-    pause & exit /b 1
-)
+if %errorlevel% neq 0 ( echo [ERROR] npm not found. & pause & exit /b 1 )
 for /f "tokens=*" %%v in ('npm -v 2^>nul') do set NPM_VER=%%v
 echo     [OK] npm v%NPM_VER%
 
@@ -67,7 +67,7 @@ if %errorlevel% equ 0 (
     for /f "tokens=*" %%v in ('git --version 2^>nul') do set GIT_VER=%%v
     echo     [OK] %GIT_VER%
 ) else (
-    echo     [WARN] Git not found - skipping git pull
+    echo     [WARN] Git not found - skipping pull
 )
 
 where psql >nul 2>&1
@@ -76,251 +76,204 @@ if %errorlevel% equ 0 (
     for /f "tokens=*" %%v in ('psql --version 2^>nul') do set PSQL_VER=%%v
     echo     [OK] %PSQL_VER%
 ) else (
-    echo     [WARN] psql not found in PATH - DB auto-creation will be skipped
-    echo           Add PostgreSQL\bin to your PATH and re-run for auto DB setup.
+    echo     [WARN] psql not in PATH - DB auto-creation will be skipped
 )
 
 :: ============================================================
 :: STEP 2 - Pull latest code
 :: ============================================================
 echo.
-echo [2/8] Pulling latest code from GitHub...
+echo [2/9] Pulling latest code from GitHub...
 if "%GIT_AVAILABLE%"=="1" (
     cd /d "%APP_DIR%"
     git pull origin main 2>&1
     if %errorlevel% neq 0 (
         echo     [WARN] Git pull failed - continuing with existing code
     ) else (
-        echo     [OK] Code updated from GitHub
+        echo     [OK] Code updated
     )
 ) else (
-    echo     Skipped (Git not available)
+    echo     Skipped
 )
 
 :: ============================================================
-:: STEP 3 - Generate JWT secret using Node.js crypto
+:: STEP 3 - Generate JWT secret
 :: ============================================================
 echo.
-echo [3/8] Generating secure JWT secret...
+echo [3/9] Generating secure JWT secret...
 for /f "tokens=*" %%s in ('node -e "const c=require('crypto');process.stdout.write(c.randomBytes(64).toString('hex'))" 2^>nul') do set JWT_SECRET=%%s
 if "%JWT_SECRET%"=="" (
-    :: Fallback: use a UUID-based approach
-    for /f "tokens=*" %%s in ('node -e "process.stdout.write(require('crypto').randomUUID().replace(/-/g,'') + require('crypto').randomUUID().replace(/-/g,''))" 2^>nul') do set JWT_SECRET=%%s
-)
-if not "%JWT_SECRET%"=="" (
-    echo     [OK] JWT secret generated (128-bit hex)
-) else (
-    echo     [WARN] Could not auto-generate JWT secret - you will need to set it manually
     set JWT_SECRET=CHANGE_THIS_TO_A_RANDOM_SECRET_AT_LEAST_64_CHARS
+    echo     [WARN] Could not auto-generate - set JWT_SECRET manually in .env
+) else (
+    echo     [OK] JWT secret generated ^(128-bit hex^)
 )
 
 :: ============================================================
 :: STEP 4 - Setup .env file
 :: ============================================================
 echo.
-echo [4/8] Setting up environment configuration...
+echo [4/9] Setting up environment configuration...
 
 if not exist "%ENV_FILE%" (
     set ENV_CREATED=1
-
-    :: Ask for database credentials
     echo.
     echo   PostgreSQL Configuration:
-    set /p DB_HOST_INPUT="   DB Host [localhost]: "
-    if not "!DB_HOST_INPUT!"=="" set DB_HOST=!DB_HOST_INPUT!
-
-    set /p DB_PORT_INPUT="   DB Port [5432]: "
-    if not "!DB_PORT_INPUT!"=="" set DB_PORT=!DB_PORT_INPUT!
-
-    set /p DB_NAME_INPUT="   DB Name [silwane_erp]: "
-    if not "!DB_NAME_INPUT!"=="" set DB_NAME=!DB_NAME_INPUT!
-
-    set /p DB_USER_INPUT="   DB User [postgres]: "
-    if not "!DB_USER_INPUT!"=="" set DB_USER=!DB_USER_INPUT!
-
+    set /p DB_HOST_IN="   DB Host [localhost]: "
+    if not "!DB_HOST_IN!"=="" set DB_HOST=!DB_HOST_IN!
+    set /p DB_PORT_IN="   DB Port [5432]: "
+    if not "!DB_PORT_IN!"=="" set DB_PORT=!DB_PORT_IN!
+    set /p DB_NAME_IN="   DB Name [silwane_erp]: "
+    if not "!DB_NAME_IN!"=="" set DB_NAME=!DB_NAME_IN!
+    set /p DB_USER_IN="   DB User [postgres]: "
+    if not "!DB_USER_IN!"=="" set DB_USER=!DB_USER_IN!
     set /p DB_PASSWORD="   DB Password: "
+    set /p PORT_IN="   App Port [5000]: "
+    if not "!PORT_IN!"=="" set PORT=!PORT_IN!
 
-    set /p PORT_INPUT="   App Port [5000]: "
-    if not "!PORT_INPUT!"=="" set PORT=!PORT_INPUT!
-
-    :: Write .env file
     echo # Silwane ERP - Environment Configuration > "%ENV_FILE%"
     echo # Auto-generated by deploy-windows.bat on %DATE% %TIME% >> "%ENV_FILE%"
     echo. >> "%ENV_FILE%"
-    echo # Application >> "%ENV_FILE%"
     echo NODE_ENV=production >> "%ENV_FILE%"
     echo PORT=!PORT! >> "%ENV_FILE%"
     echo. >> "%ENV_FILE%"
-    echo # Database (PostgreSQL) >> "%ENV_FILE%"
     echo DB_HOST=!DB_HOST! >> "%ENV_FILE%"
     echo DB_PORT=!DB_PORT! >> "%ENV_FILE%"
     echo DB_NAME=!DB_NAME! >> "%ENV_FILE%"
     echo DB_USER=!DB_USER! >> "%ENV_FILE%"
     echo DB_PASSWORD=!DB_PASSWORD! >> "%ENV_FILE%"
     echo. >> "%ENV_FILE%"
-    echo # JWT (auto-generated) >> "%ENV_FILE%"
     echo JWT_SECRET=!JWT_SECRET! >> "%ENV_FILE%"
     echo JWT_EXPIRES_IN=7d >> "%ENV_FILE%"
     echo. >> "%ENV_FILE%"
-    echo # Email (optional - configure if needed) >> "%ENV_FILE%"
     echo EMAIL_HOST=smtp.gmail.com >> "%ENV_FILE%"
     echo EMAIL_PORT=587 >> "%ENV_FILE%"
     echo EMAIL_USER= >> "%ENV_FILE%"
     echo EMAIL_PASS= >> "%ENV_FILE%"
 
-    echo     [OK] .env file created with all configuration
+    echo     [OK] .env created
 ) else (
     echo     [SKIP] .env already exists - reading existing values
-    :: Read existing values for summary
     for /f "tokens=1,* delims==" %%a in ('type "%ENV_FILE%" ^| findstr /v "^#" ^| findstr /v "^$"') do (
-        if "%%a"=="DB_NAME" set DB_NAME=%%b
-        if "%%a"=="DB_USER" set DB_USER=%%b
-        if "%%a"=="DB_HOST" set DB_HOST=%%b
-        if "%%a"=="DB_PORT" set DB_PORT=%%b
-        if "%%a"=="PORT" set PORT=%%b
-        if "%%a"=="JWT_SECRET" set JWT_SECRET=%%b
+        if "%%a"=="DB_NAME"     set DB_NAME=%%b
+        if "%%a"=="DB_USER"     set DB_USER=%%b
+        if "%%a"=="DB_HOST"     set DB_HOST=%%b
+        if "%%a"=="DB_PORT"     set DB_PORT=%%b
+        if "%%a"=="PORT"        set PORT=%%b
+        if "%%a"=="JWT_SECRET"  set JWT_SECRET=%%b
+        if "%%a"=="DB_PASSWORD" set DB_PASSWORD=%%b
     )
-    echo     [INFO] To regenerate JWT secret, delete .env and re-run this script.
 )
 
 :: ============================================================
-:: STEP 5 - Auto create PostgreSQL database
+:: STEP 5 - Create PostgreSQL database + run migrations
 :: ============================================================
 echo.
-echo [5/8] Setting up PostgreSQL database...
+echo [5/9] Setting up PostgreSQL database...
 
 if "%PSQL_AVAILABLE%"=="1" (
-    echo     Attempting to create database '%DB_NAME%' on %DB_HOST%:%DB_PORT%...
-    echo     (You may be prompted for your PostgreSQL password)
-
-    :: Check if DB already exists
     set PGPASSWORD=%DB_PASSWORD%
     psql -h %DB_HOST% -p %DB_PORT% -U %DB_USER% -lqt 2>nul | findstr /i "%DB_NAME%" >nul 2>&1
     if %errorlevel% equ 0 (
         echo     [SKIP] Database '%DB_NAME%' already exists
-        set DB_CREATED=0
     ) else (
-        :: Create database
-        psql -h %DB_HOST% -p %DB_PORT% -U %DB_USER% -c "CREATE DATABASE %DB_NAME%;" 2>&1
+        psql -h %DB_HOST% -p %DB_PORT% -U %DB_USER% -c "CREATE DATABASE %DB_NAME%;" >nul 2>&1
         if %errorlevel% equ 0 (
-            echo     [OK] Database '%DB_NAME%' created successfully
+            echo     [OK] Database '%DB_NAME%' created
             set DB_CREATED=1
         ) else (
-            echo     [WARN] Could not create database automatically.
-            echo           Please create it manually:
+            echo     [WARN] Could not create database - create it manually:
             echo           psql -U %DB_USER% -c "CREATE DATABASE %DB_NAME%;"
         )
     )
-
-    :: Run SQL migrations/seeds if they exist
     if exist "%APP_DIR%\database\schema.sql" (
-        echo     Running schema migrations...
-        psql -h %DB_HOST% -p %DB_PORT% -U %DB_USER% -d %DB_NAME% -f "%APP_DIR%\database\schema.sql" 2>&1
-        if %errorlevel% equ 0 (
-            echo     [OK] Schema applied
-        ) else (
-            echo     [WARN] Schema migration had errors - check database\schema.sql
-        )
+        psql -h %DB_HOST% -p %DB_PORT% -U %DB_USER% -d %DB_NAME% -f "%APP_DIR%\database\schema.sql" >nul 2>&1
+        if %errorlevel% equ 0 ( echo     [OK] Schema applied ) else ( echo     [WARN] Schema had errors )
     )
     if exist "%APP_DIR%\database\seed.sql" (
-        echo     Running seed data...
-        psql -h %DB_HOST% -p %DB_PORT% -U %DB_USER% -d %DB_NAME% -f "%APP_DIR%\database\seed.sql" 2>&1
-        if %errorlevel% equ 0 (
-            echo     [OK] Seed data applied
-        ) else (
-            echo     [WARN] Seed data had errors
-        )
+        psql -h %DB_HOST% -p %DB_PORT% -U %DB_USER% -d %DB_NAME% -f "%APP_DIR%\database\seed.sql" >nul 2>&1
+        if %errorlevel% equ 0 ( echo     [OK] Seed data applied ) else ( echo     [WARN] Seed had errors )
     )
 ) else (
-    echo     [SKIP] psql not available - skipping automatic DB creation
-    echo     Please create the database manually:
-    echo       CREATE DATABASE %DB_NAME%;
+    echo     [SKIP] psql not available
 )
 
 :: ============================================================
 :: STEP 6 - Install backend dependencies
 :: ============================================================
 echo.
-echo [6/8] Installing backend dependencies...
+echo [6/9] Installing backend dependencies...
 cd /d "%APP_DIR%"
 call npm install --production
-if %errorlevel% neq 0 (
-    echo [ERROR] npm install failed for backend.
-    pause & exit /b 1
-)
-echo     [OK] Backend dependencies installed
+if %errorlevel% neq 0 ( echo [ERROR] npm install failed. & pause & exit /b 1 )
+echo     [OK] Dependencies installed
 
 :: ============================================================
-:: STEP 7 - Install and build frontend
+:: STEP 7 - Build frontend
 :: ============================================================
 echo.
-echo [7/8] Building frontend...
-
+echo [7/9] Building frontend...
 set FRONTEND_BUILT=0
 if exist "%APP_DIR%\client\package.json" (
     cd /d "%APP_DIR%\client"
-    call npm install
-    if %errorlevel% equ 0 (
-        call npm run build
-        if %errorlevel% equ 0 (
-            set FRONTEND_BUILT=1
-            echo     [OK] Frontend built successfully (client/)
-        ) else (
-            echo     [WARN] Frontend build failed
-        )
-    )
+    call npm install >nul 2>&1 && call npm run build >nul 2>&1
+    if %errorlevel% equ 0 ( set FRONTEND_BUILT=1 & echo     [OK] Frontend built ) else ( echo     [WARN] Frontend build failed )
 ) else if exist "%APP_DIR%\frontend\package.json" (
     cd /d "%APP_DIR%\frontend"
-    call npm install
-    if %errorlevel% equ 0 (
-        call npm run build
-        if %errorlevel% equ 0 (
-            set FRONTEND_BUILT=1
-            echo     [OK] Frontend built successfully (frontend/)
-        ) else (
-            echo     [WARN] Frontend build failed
-        )
-    )
+    call npm install >nul 2>&1 && call npm run build >nul 2>&1
+    if %errorlevel% equ 0 ( set FRONTEND_BUILT=1 & echo     [OK] Frontend built ) else ( echo     [WARN] Frontend build failed )
 ) else (
     echo     [SKIP] No frontend directory found
-    set FRONTEND_BUILT=1
 )
 
 :: ============================================================
-:: STEP 8 - Start with PM2
+:: STEP 8 - Create initial admin account
 :: ============================================================
 echo.
-echo [8/8] Starting application with PM2...
+echo [8/9] Setting up initial admin account...
+cd /d "%APP_DIR%"
+
+node "%SCRIPTS_DIR%\create-admin.js"
+if %errorlevel% equ 0 (
+    set ADMIN_CREATED=1
+) else (
+    echo     [WARN] Admin setup exited with an error.
+    echo           You can run it manually later:
+    echo           node scripts/create-admin.js
+)
+
+:: ============================================================
+:: STEP 9 - Start with PM2
+:: ============================================================
+echo.
+echo [9/9] Starting application with PM2...
 cd /d "%APP_DIR%"
 
 where pm2 >nul 2>&1
 if %errorlevel% neq 0 (
-    echo     PM2 not found - installing globally...
+    echo     Installing PM2 globally...
     call npm install -g pm2
-    if %errorlevel% neq 0 (
-        echo     [WARN] PM2 install failed - starting with node directly
-        start "Silwane ERP" cmd /k "cd /d "%APP_DIR%" && node server.js"
-        set PM2_AVAILABLE=0
-        goto :showsummary
-    )
 )
 
-set PM2_AVAILABLE=1
-pm2 describe silwane-erp >nul 2>&1
+where pm2 >nul 2>&1
 if %errorlevel% equ 0 (
-    echo     Restarting existing PM2 process...
-    pm2 restart silwane-erp
+    set PM2_AVAILABLE=1
+    pm2 describe silwane-erp >nul 2>&1
+    if %errorlevel% equ 0 (
+        pm2 restart silwane-erp
+    ) else (
+        pm2 start server.js --name "silwane-erp" --env production
+    )
+    pm2 save >nul 2>&1
+    echo     [OK] App started via PM2
 ) else (
-    echo     Starting new PM2 process...
-    pm2 start server.js --name "silwane-erp" --env production
+    echo     [WARN] PM2 unavailable - starting with node directly
+    start "Silwane ERP" cmd /k "cd /d "%APP_DIR%" && node server.js"
 )
-pm2 save >nul 2>&1
-echo     [OK] Process saved - will survive system restart
 
 :: ============================================================
-:: DEPLOYMENT SUMMARY
+:: STEP 10 - Deployment Summary
 :: ============================================================
-:showsummary
 echo.
 echo.
 echo =====================================================
@@ -340,44 +293,44 @@ echo   Host        : %DB_HOST%:%DB_PORT%
 echo   Database    : %DB_NAME%
 echo   User        : %DB_USER%
 if "%DB_CREATED%"=="1" (
-echo   Status      : NEWLY CREATED
+    echo   Status      : NEWLY CREATED
 ) else (
-echo   Status      : Already existed / Pre-configured
+    echo   Status      : Pre-existing
 )
 echo.
 echo   SECURITY
 echo   --------
-:: Show only first 16 chars of JWT secret for verification
 set JWT_PREVIEW=%JWT_SECRET:~0,16%
-echo   JWT Secret  : %JWT_PREVIEW%... (stored in .env)
+echo   JWT Secret  : %JWT_PREVIEW%... ^(full value in .env^)
 echo   JWT Expires : 7d
 echo.
 echo   ENV FILE
 echo   --------
 if "%ENV_CREATED%"=="1" (
-echo   Status      : NEWLY CREATED at:
-echo   Path        : %ENV_FILE%
+    echo   Status      : NEWLY CREATED
 ) else (
-echo   Status      : Pre-existing (not modified)
+    echo   Status      : Pre-existing
+)
 echo   Path        : %ENV_FILE%
+echo.
+echo   ADMIN ACCOUNT
+echo   -------------
+if "%ADMIN_CREATED%"=="1" (
+    echo   Status      : Created ^(see credentials above^)
+    echo   Login URL   : http://localhost:%PORT%
+) else (
+    echo   Status      : Skipped or already existed
+    echo   Manual cmd  : node scripts/create-admin.js
 )
 echo.
 echo   PROCESS MANAGER
 echo   ---------------
 if "%PM2_AVAILABLE%"=="1" (
-echo   Manager     : PM2
-echo   Process     : silwane-erp
-echo   Auto-restart: YES
-echo.
-echo   PM2 Commands:
-echo     pm2 status              - Check process health
-echo     pm2 logs silwane-erp    - View live logs
-echo     pm2 restart silwane-erp - Restart the app
-echo     pm2 stop silwane-erp    - Stop the app
-echo     pm2 startup             - Enable Windows auto-start on boot
+    echo   Manager     : PM2  ^(auto-restart ON^)
+    echo   Commands    : pm2 status ^| pm2 logs silwane-erp ^| pm2 restart silwane-erp
+    echo   Auto-boot   : run ^'pm2 startup^' to enable Windows auto-start
 ) else (
-echo   Manager     : Node.js (direct - PM2 unavailable)
-echo   Auto-restart: NO (install PM2 manually for auto-restart)
+    echo   Manager     : node ^(direct - install PM2 for auto-restart^)
 )
 echo.
 echo =====================================================
