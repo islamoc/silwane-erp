@@ -6,21 +6,21 @@ chcp 65001 >nul
 :: ============================================================
 ::  Silwane ERP - Windows Auto Deployment Script
 ::  Author : Mennouchi Islam Azeddine
-::  Version: 4.1
+::  Version: 4.2
 ::
 ::  Steps:
 ::    1.  Prerequisite checks (Node, npm, Git, psql)
 ::    2.  Git pull latest code
 ::    3.  Generate secure JWT secret
 ::    4.  Setup backend .env
-::    5.  Create PostgreSQL database + run migrations  [FIXED]
+::    5.  Create PostgreSQL database + run migrations
 ::    6.  Install backend dependencies
 ::    7.  Setup frontend .env  (REACT_APP_API_URL, etc.)
 ::    8.  Install frontend dependencies
 ::    9.  Build frontend (React production build)
 ::   10.  Create initial admin account
-::   11.  Start backend  with PM2 (silwane-erp-api)
-::   12.  Start frontend with PM2 + serve (silwane-erp-ui)
+::   11.  Start backend  with PM2 (silwane-erp-api)  [FIXED]
+::   12.  Start frontend with PM2 + serve (silwane-erp-ui) [FIXED]
 ::   13.  Full deployment summary + open browser
 :: ============================================================
 
@@ -55,7 +55,7 @@ set "ADMIN_CREATED=0"
 
 echo.
 echo =====================================================
-echo   SILWANE ERP - Windows Auto Deployment v4.1
+echo   SILWANE ERP - Windows Auto Deployment v4.2
 echo =====================================================
 echo.
 
@@ -97,7 +97,7 @@ echo [2/12] Pulling latest code...
 if "%GIT_AVAILABLE%"=="1" (
     cd /d "%APP_DIR%"
     git pull origin main 2>&1
-    if %errorlevel% equ 0 ( echo     [OK] Code updated ) else ( echo     [WARN] Git pull failed - using existing code )
+    if !errorlevel! equ 0 ( echo     [OK] Code updated ) else ( echo     [WARN] Git pull failed - using existing code )
 ) else ( echo     Skipped )
 
 :: ============================================================
@@ -173,31 +173,15 @@ if not exist "%ENV_FILE%" (
 )
 
 :: ============================================================
-:: STEP 5 - PostgreSQL database creation + migrations  [FIXED]
-::
-::  FIX 1: Always connect to the system 'postgres' database when
-::          checking existence or creating the app database.
-::          The old code used -lqt | findstr which is unreliable
-::          and may not pass the password correctly.
-::
-::  FIX 2: Query pg_database directly with -tAc so we get a
-::          clean "1" / "" result that works with IF in batch.
-::
-::  FIX 3: Add -v ON_ERROR_STOP=1 to schema and seed commands
-::          so psql returns a non-zero exit code on SQL errors
-::          and we can print the actual failing statement.
-::
-::  FIX 4: Suppress PGPASSWORD after use for safety.
+:: STEP 5 - PostgreSQL database creation + migrations
 :: ============================================================
 echo.
 echo [5/12] Setting up PostgreSQL database...
 
 if "%PSQL_AVAILABLE%"=="1" (
 
-    :: Export password so psql can pick it up without a prompt
     set "PGPASSWORD=!DB_PASSWORD!"
 
-    :: -- Check if database already exists via pg_database catalog --
     echo     Checking if database '!DB_NAME!' exists...
     set "DB_EXISTS="
     for /f "usebackq delims=" %%r in (
@@ -208,26 +192,16 @@ if "%PSQL_AVAILABLE%"=="1" (
         echo     [OK] Database '!DB_NAME!' already exists - skipping creation
     ) else (
         echo     Creating database '!DB_NAME!'...
-        psql -h !DB_HOST! -p !DB_PORT! -U !DB_USER! -d postgres ^
-             -v ON_ERROR_STOP=1 ^
-             -c "CREATE DATABASE !DB_NAME!;"
+        psql -h !DB_HOST! -p !DB_PORT! -U !DB_USER! -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE !DB_NAME!;"
         if !errorlevel! neq 0 (
             echo.
             echo     [ERROR] Could not create database '!DB_NAME!'.
-            echo.
             echo     Possible reasons:
-            echo       1. PostgreSQL service is not running
-            echo          ^>^> Open Services ^(services.msc^) and start postgresql-x64-*
+            echo       1. PostgreSQL service is not running  ^(open services.msc^)
             echo       2. Wrong password for user '!DB_USER!'
-            echo          ^>^> Check DB_PASSWORD in .env or re-enter during setup
-            echo       3. User '!DB_USER!' lacks CREATEDB permission
-            echo          ^>^> Run as a superuser:
+            echo       3. User lacks CREATEDB permission:
             echo              psql -U postgres -d postgres -c "ALTER ROLE !DB_USER! CREATEDB;"
-            echo       4. Host/port mismatch  ^(!DB_HOST!:!DB_PORT!^)
-            echo          ^>^> Verify PostgreSQL is listening on that address
-            echo.
-            echo     Manual fix:
-            echo       psql -h !DB_HOST! -p !DB_PORT! -U !DB_USER! -d postgres -c "CREATE DATABASE !DB_NAME!;"
+            echo       4. Wrong host/port: !DB_HOST!:!DB_PORT!
             echo.
             set "PGPASSWORD="
             pause
@@ -237,47 +211,29 @@ if "%PSQL_AVAILABLE%"=="1" (
         set "DB_CREATED=1"
     )
 
-    :: -- Apply schema --
     if exist "%APP_DIR%\database\schema.sql" (
         echo     Applying schema.sql...
-        psql -h !DB_HOST! -p !DB_PORT! -U !DB_USER! -d !DB_NAME! ^
-             -v ON_ERROR_STOP=1 ^
-             -f "%APP_DIR%\database\schema.sql"
+        psql -h !DB_HOST! -p !DB_PORT! -U !DB_USER! -d !DB_NAME! -v ON_ERROR_STOP=1 -f "%APP_DIR%\database\schema.sql"
         if !errorlevel! neq 0 (
-            echo.
-            echo     [ERROR] schema.sql failed.
-            echo             Review the SQL error printed above.
-            echo             Fix the issue in database\schema.sql and re-run.
-            echo.
+            echo     [ERROR] schema.sql failed. Fix the SQL error above and re-run.
             set "PGPASSWORD="
             pause
             exit /b 1
         )
         echo     [OK] Schema applied
-    ) else (
-        echo     [INFO] database\schema.sql not found - skipping
-    )
+    ) else ( echo     [INFO] database\schema.sql not found - skipping )
 
-    :: -- Apply seed --
     if exist "%APP_DIR%\database\seed.sql" (
         echo     Applying seed.sql...
-        psql -h !DB_HOST! -p !DB_PORT! -U !DB_USER! -d !DB_NAME! ^
-             -v ON_ERROR_STOP=1 ^
-             -f "%APP_DIR%\database\seed.sql"
+        psql -h !DB_HOST! -p !DB_PORT! -U !DB_USER! -d !DB_NAME! -v ON_ERROR_STOP=1 -f "%APP_DIR%\database\seed.sql"
         if !errorlevel! neq 0 (
-            echo.
-            echo     [ERROR] seed.sql failed.
-            echo             Review the SQL error printed above.
-            echo             Fix the issue in database\seed.sql and re-run.
-            echo.
+            echo     [ERROR] seed.sql failed. Fix the SQL error above and re-run.
             set "PGPASSWORD="
             pause
             exit /b 1
         )
         echo     [OK] Seed data applied
-    ) else (
-        echo     [INFO] database\seed.sql not found - skipping
-    )
+    ) else ( echo     [INFO] database\seed.sql not found - skipping )
 
     set "PGPASSWORD="
 
@@ -370,26 +326,23 @@ if not exist "%FRONTEND_DIR%\package.json" (
 )
 
 cd /d "%FRONTEND_DIR%"
-echo     Running: npm run build  ^(React + MUI - may take 1-3 minutes...^)
+echo     Running: npm run build  ^(may take 1-3 minutes...^)
 call npm run build
 if %errorlevel% neq 0 (
-    echo     [ERROR] React build failed.
-    echo             Check frontend\src for compilation errors.
-    echo             Backend will start without the UI.
+    echo     [ERROR] React build failed. Check frontend\src for errors.
     goto :step10
 )
 
 set FE_BUILT=1
 echo     [OK] React build complete  =^>  frontend\build\
 
-:: If backend has a /public folder, copy the build there so Express serves it
 if exist "%APP_DIR%\public" (
-    echo     Copying build into backend public\ folder...
+    echo     Syncing build to backend public\ folder...
     xcopy /E /I /Y "%FRONTEND_DIR%\build\*" "%APP_DIR%\public\" >nul 2>&1
-    if %errorlevel% equ 0 (
-        echo     [OK] Build synced to public\ ^(served by Express at http://localhost:%PORT%^)
+    if !errorlevel! equ 0 (
+        echo     [OK] Build synced to public\
     ) else (
-        echo     [WARN] xcopy failed - UI will be served separately on port %FE_PORT%
+        echo     [WARN] xcopy failed - UI will serve on port %FE_PORT% separately
     )
 )
 
@@ -404,12 +357,22 @@ node "%SCRIPTS_DIR%\create-admin.js"
 if %errorlevel% equ 0 (
     set ADMIN_CREATED=1
 ) else (
-    echo     [WARN] Admin setup exited with error or was skipped.
+    echo     [WARN] Admin setup skipped or failed.
     echo           Run manually: node scripts/create-admin.js
 )
 
 :: ============================================================
-:: STEP 11 - Start backend with PM2
+:: STEP 11 - Start backend with PM2  [FIXED]
+::
+::  ROOT CAUSE of "[PM2][ERROR] Process not found" + wrong message:
+::    The old code used %errorlevel% inside an if/else block.
+::    In CMD batch, %var% is expanded at PARSE TIME for the whole
+::    block, so both branches read the same stale value.
+::    Fix: use !errorlevel! (delayed expansion) so the value is
+::    read AFTER pm2 describe actually runs.
+::
+::  Also added --update-env to restart so .env changes are picked
+::  up without needing to delete the PM2 process first.
 :: ============================================================
 echo.
 echo [11/12] Starting backend with PM2...
@@ -417,69 +380,115 @@ cd /d "%APP_DIR%"
 
 where pm2 >nul 2>&1
 if %errorlevel% neq 0 (
-    echo     Installing PM2 globally...
+    echo     PM2 not found - installing globally...
     call npm install -g pm2
+    if !errorlevel! neq 0 (
+        echo     [ERROR] Failed to install PM2.
+        echo             Install manually: npm install -g pm2
+        pause & exit /b 1
+    )
 )
 
 where pm2 >nul 2>&1
-if %errorlevel% equ 0 (
+if !errorlevel! equ 0 (
     set PM2_AVAILABLE=1
+
+    :: Check if the process already exists
     pm2 describe silwane-erp-api >nul 2>&1
-    if %errorlevel% equ 0 (
-        pm2 restart silwane-erp-api
-        echo     [OK] Backend restarted  ^(silwane-erp-api^)
+    set PM2_API_EXISTS=!errorlevel!
+
+    if !PM2_API_EXISTS! equ 0 (
+        :: Process exists - restart it and reload env vars
+        pm2 restart silwane-erp-api --update-env
+        if !errorlevel! equ 0 (
+            echo     [OK] Backend restarted with updated env  ^(silwane-erp-api^)
+        ) else (
+            echo     [WARN] Restart failed - trying delete + start...
+            pm2 delete silwane-erp-api >nul 2>&1
+            pm2 start server.js --name "silwane-erp-api" --env production
+            echo     [OK] Backend started fresh  ^(silwane-erp-api^)
+        )
     ) else (
+        :: Process does not exist - start it fresh
         pm2 start server.js --name "silwane-erp-api" --env production
-        echo     [OK] Backend started   ^(silwane-erp-api^)  ->  http://localhost:%PORT%
+        if !errorlevel! equ 0 (
+            echo     [OK] Backend started  ^(silwane-erp-api^)  ->  http://localhost:%PORT%
+        ) else (
+            echo     [ERROR] PM2 could not start server.js
+            echo             Check that server.js exists in: %APP_DIR%
+            echo             Run manually: node server.js
+            pause & exit /b 1
+        )
     )
+
+    pm2 save >nul 2>&1
+
 ) else (
-    echo     [WARN] PM2 unavailable - starting backend in new CMD window
+    echo     [WARN] PM2 still unavailable - starting backend in new CMD window
     start "Silwane ERP API" cmd /k "cd /d "%APP_DIR%" && node server.js"
 )
 
 :: ============================================================
-:: STEP 12 - Serve frontend with PM2 + 'serve'
+:: STEP 12 - Serve frontend with PM2 + 'serve'  [FIXED]
+::
+::  Same delayed expansion fix applied here for pm2 describe check.
 :: ============================================================
 echo.
 echo [12/12] Starting frontend...
 
 if "%FE_BUILT%"=="0" (
-    echo     [SKIP] Frontend was not built successfully
+    echo     [SKIP] Frontend was not built - skipping serve
     goto :summary
 )
 
-:: Install 'serve' globally if missing
 where serve >nul 2>&1
 if %errorlevel% neq 0 (
-    echo     Installing 'serve' package globally...
+    echo     'serve' not found - installing globally...
     call npm install -g serve
 )
 
 where serve >nul 2>&1
-if %errorlevel% equ 0 (
+if !errorlevel! equ 0 (
     set SERVE_AVAILABLE=1
+
     if "%PM2_AVAILABLE%"=="1" (
         pm2 describe silwane-erp-ui >nul 2>&1
-        if %errorlevel% equ 0 (
-            pm2 restart silwane-erp-ui
-            echo     [OK] Frontend restarted ^(silwane-erp-ui^)
+        set PM2_UI_EXISTS=!errorlevel!
+
+        if !PM2_UI_EXISTS! equ 0 (
+            pm2 restart silwane-erp-ui --update-env
+            if !errorlevel! equ 0 (
+                echo     [OK] Frontend restarted  ^(silwane-erp-ui^)
+            ) else (
+                pm2 delete silwane-erp-ui >nul 2>&1
+                pm2 start "serve" --name "silwane-erp-ui" -- -s "%FRONTEND_DIR%\build" -l %FE_PORT%
+                echo     [OK] Frontend started fresh  ^(silwane-erp-ui^)
+            )
         ) else (
             pm2 start "serve" --name "silwane-erp-ui" -- -s "%FRONTEND_DIR%\build" -l %FE_PORT%
-            echo     [OK] Frontend started  ^(silwane-erp-ui^)   ->  http://localhost:%FE_PORT%
+            if !errorlevel! equ 0 (
+                echo     [OK] Frontend started  ^(silwane-erp-ui^)  ->  http://localhost:%FE_PORT%
+            ) else (
+                echo     [ERROR] Could not start frontend via PM2
+                echo             Run manually: npx serve -s frontend\build -l %FE_PORT%
+            )
         )
+
         pm2 save >nul 2>&1
-        echo     [OK] Both PM2 processes saved ^(survive reboot^)
+        echo     [OK] PM2 process list saved ^(auto-restart on reboot^)
+
     ) else (
         start "Silwane ERP UI" cmd /k "serve -s "%FRONTEND_DIR%\build" -l %FE_PORT%"
         echo     [OK] Frontend serving in new window  ->  http://localhost:%FE_PORT%
     )
+
     set FE_RUNNING=1
+
 ) else (
     echo     [WARN] 'serve' could not be installed.
     echo           Serve manually: npx serve -s frontend\build -l %FE_PORT%
 )
 
-:: Wait briefly for processes to initialize
 timeout /t 3 /nobreak >nul
 
 :: ============================================================
@@ -544,22 +553,22 @@ if "%ADMIN_CREATED%"=="1" (
 echo.
 echo   PM2 COMMANDS
 echo   ------------
-echo   pm2 status                  - View all processes
-echo   pm2 logs silwane-erp-api    - Backend live logs
-echo   pm2 logs silwane-erp-ui     - Frontend live logs
-echo   pm2 restart all             - Restart everything
-echo   pm2 stop all                - Stop everything
-echo   pm2 startup                 - Enable auto-start on Windows boot
+echo   pm2 status                     - View all processes
+echo   pm2 logs silwane-erp-api       - Backend live logs
+echo   pm2 logs silwane-erp-ui        - Frontend live logs
+echo   pm2 restart all --update-env   - Restart + reload .env
+echo   pm2 stop all                   - Stop everything
+echo   pm2 startup                    - Auto-start on Windows boot
 echo.
 echo   QUICK LINKS
 echo   -----------
 echo   App      : http://localhost:%FE_PORT%
 echo   API      : http://localhost:%PORT%/api
+echo   Health   : http://localhost:%PORT%/api/health
 echo.
 echo =====================================================
 echo.
 
-:: Open browser automatically on the frontend URL
 if "%FE_RUNNING%"=="1" (
     echo Opening app in browser...
     timeout /t 2 /nobreak >nul
