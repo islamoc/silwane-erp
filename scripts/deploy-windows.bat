@@ -6,14 +6,14 @@ chcp 65001 >nul
 :: ============================================================
 ::  Silwane ERP - Windows Auto Deployment Script
 ::  Author : Mennouchi Islam Azeddine
-::  Version: 4.0
+::  Version: 4.1
 ::
 ::  Steps:
 ::    1.  Prerequisite checks (Node, npm, Git, psql)
 ::    2.  Git pull latest code
 ::    3.  Generate secure JWT secret
 ::    4.  Setup backend .env
-::    5.  Create PostgreSQL database + run migrations
+::    5.  Create PostgreSQL database + run migrations  [FIXED]
 ::    6.  Install backend dependencies
 ::    7.  Setup frontend .env  (REACT_APP_API_URL, etc.)
 ::    8.  Install frontend dependencies
@@ -55,7 +55,7 @@ set "ADMIN_CREATED=0"
 
 echo.
 echo =====================================================
-echo   SILWANE ERP - Windows Auto Deployment v4.0
+echo   SILWANE ERP - Windows Auto Deployment v4.1
 echo =====================================================
 echo.
 
@@ -173,29 +173,114 @@ if not exist "%ENV_FILE%" (
 )
 
 :: ============================================================
-:: STEP 5 - PostgreSQL database creation + migrations
+:: STEP 5 - PostgreSQL database creation + migrations  [FIXED]
+::
+::  FIX 1: Always connect to the system 'postgres' database when
+::          checking existence or creating the app database.
+::          The old code used -lqt | findstr which is unreliable
+::          and may not pass the password correctly.
+::
+::  FIX 2: Query pg_database directly with -tAc so we get a
+::          clean "1" / "" result that works with IF in batch.
+::
+::  FIX 3: Add -v ON_ERROR_STOP=1 to schema and seed commands
+::          so psql returns a non-zero exit code on SQL errors
+::          and we can print the actual failing statement.
+::
+::  FIX 4: Suppress PGPASSWORD after use for safety.
 :: ============================================================
 echo.
 echo [5/12] Setting up PostgreSQL database...
 
 if "%PSQL_AVAILABLE%"=="1" (
-    set PGPASSWORD=%DB_PASSWORD%
-    psql -h %DB_HOST% -p %DB_PORT% -U %DB_USER% -lqt 2>nul | findstr /i "%DB_NAME%" >nul 2>&1
-    if %errorlevel% equ 0 (
-        echo     [SKIP] Database '%DB_NAME%' already exists
+
+    :: Export password so psql can pick it up without a prompt
+    set "PGPASSWORD=!DB_PASSWORD!"
+
+    :: -- Check if database already exists via pg_database catalog --
+    echo     Checking if database '!DB_NAME!' exists...
+    set "DB_EXISTS="
+    for /f "usebackq delims=" %%r in (
+        `psql -h !DB_HOST! -p !DB_PORT! -U !DB_USER! -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='!DB_NAME!';" 2^>nul`
+    ) do set "DB_EXISTS=%%r"
+
+    if "!DB_EXISTS!"=="1" (
+        echo     [OK] Database '!DB_NAME!' already exists - skipping creation
     ) else (
-        psql -h %DB_HOST% -p %DB_PORT% -U %DB_USER% -c "CREATE DATABASE %DB_NAME%;" >nul 2>&1
-        if %errorlevel% equ 0 ( echo     [OK] Database '%DB_NAME%' created & set DB_CREATED=1
-        ) else ( echo     [WARN] Could not auto-create DB. Run: psql -U %DB_USER% -c "CREATE DATABASE %DB_NAME%;" )
+        echo     Creating database '!DB_NAME!'...
+        psql -h !DB_HOST! -p !DB_PORT! -U !DB_USER! -d postgres ^
+             -v ON_ERROR_STOP=1 ^
+             -c "CREATE DATABASE !DB_NAME!;"
+        if !errorlevel! neq 0 (
+            echo.
+            echo     [ERROR] Could not create database '!DB_NAME!'.
+            echo.
+            echo     Possible reasons:
+            echo       1. PostgreSQL service is not running
+            echo          ^>^> Open Services ^(services.msc^) and start postgresql-x64-*
+            echo       2. Wrong password for user '!DB_USER!'
+            echo          ^>^> Check DB_PASSWORD in .env or re-enter during setup
+            echo       3. User '!DB_USER!' lacks CREATEDB permission
+            echo          ^>^> Run as a superuser:
+            echo              psql -U postgres -d postgres -c "ALTER ROLE !DB_USER! CREATEDB;"
+            echo       4. Host/port mismatch  ^(!DB_HOST!:!DB_PORT!^)
+            echo          ^>^> Verify PostgreSQL is listening on that address
+            echo.
+            echo     Manual fix:
+            echo       psql -h !DB_HOST! -p !DB_PORT! -U !DB_USER! -d postgres -c "CREATE DATABASE !DB_NAME!;"
+            echo.
+            set "PGPASSWORD="
+            pause
+            exit /b 1
+        )
+        echo     [OK] Database '!DB_NAME!' created successfully
+        set "DB_CREATED=1"
     )
+
+    :: -- Apply schema --
     if exist "%APP_DIR%\database\schema.sql" (
-        psql -h %DB_HOST% -p %DB_PORT% -U %DB_USER% -d %DB_NAME% -f "%APP_DIR%\database\schema.sql" >nul 2>&1
-        if %errorlevel% equ 0 ( echo     [OK] Schema applied ) else ( echo     [WARN] Schema errors )
+        echo     Applying schema.sql...
+        psql -h !DB_HOST! -p !DB_PORT! -U !DB_USER! -d !DB_NAME! ^
+             -v ON_ERROR_STOP=1 ^
+             -f "%APP_DIR%\database\schema.sql"
+        if !errorlevel! neq 0 (
+            echo.
+            echo     [ERROR] schema.sql failed.
+            echo             Review the SQL error printed above.
+            echo             Fix the issue in database\schema.sql and re-run.
+            echo.
+            set "PGPASSWORD="
+            pause
+            exit /b 1
+        )
+        echo     [OK] Schema applied
+    ) else (
+        echo     [INFO] database\schema.sql not found - skipping
     )
+
+    :: -- Apply seed --
     if exist "%APP_DIR%\database\seed.sql" (
-        psql -h %DB_HOST% -p %DB_PORT% -U %DB_USER% -d %DB_NAME% -f "%APP_DIR%\database\seed.sql" >nul 2>&1
-        if %errorlevel% equ 0 ( echo     [OK] Seed data applied ) else ( echo     [WARN] Seed errors )
+        echo     Applying seed.sql...
+        psql -h !DB_HOST! -p !DB_PORT! -U !DB_USER! -d !DB_NAME! ^
+             -v ON_ERROR_STOP=1 ^
+             -f "%APP_DIR%\database\seed.sql"
+        if !errorlevel! neq 0 (
+            echo.
+            echo     [ERROR] seed.sql failed.
+            echo             Review the SQL error printed above.
+            echo             Fix the issue in database\seed.sql and re-run.
+            echo.
+            set "PGPASSWORD="
+            pause
+            exit /b 1
+        )
+        echo     [OK] Seed data applied
+    ) else (
+        echo     [INFO] database\seed.sql not found - skipping
     )
+
+    set "PGPASSWORD="
+
 ) else (
     echo     [SKIP] psql not available
 )
