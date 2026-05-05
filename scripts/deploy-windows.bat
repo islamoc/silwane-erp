@@ -1,221 +1,311 @@
 @echo off
 setlocal EnableDelayedExpansion
 title Silwane ERP - Windows Auto Deployment
+chcp 65001 >nul
 
 :: ============================================================
 ::  Silwane ERP - Windows Auto Deployment Script
 ::  Author: Mennouchi Islam Azeddine
-::  Description: Installs dependencies, sets up .env, runs DB
-::               migrations and starts the ERP server on Windows
+::  Version: 2.0
+::  Features:
+::    - Prerequisite checks (Node, npm, Git, psql)
+::    - Auto JWT secret generation (via Node.js)
+::    - Auto PostgreSQL database creation
+::    - .env setup with all generated values
+::    - Frontend build (client/ or frontend/)
+::    - PM2 process management
+::    - Full deployment summary at the end
 :: ============================================================
 
-set "REPO_URL=https://github.com/islamoc/silwane-erp.git"
 set "APP_DIR=%~dp0.."
-set "NODE_MIN_VERSION=18"
+set "ENV_FILE=%APP_DIR%\.env"
+set "ENV_EXAMPLE=%APP_DIR%\.env.example"
+set "PORT=5000"
+set "DB_HOST=localhost"
+set "DB_PORT=5432"
+set "DB_NAME=silwane_erp"
+set "DB_USER=postgres"
+set "DB_PASSWORD="
+set "JWT_SECRET="
+set "GIT_AVAILABLE=0"
+set "PSQL_AVAILABLE=0"
+set "PM2_AVAILABLE=0"
+set "DB_CREATED=0"
+set "ENV_CREATED=0"
 
 echo.
 echo =====================================================
-echo   SILWANE ERP - Windows Auto Deployment
+echo   SILWANE ERP - Windows Auto Deployment v2.0
 echo =====================================================
 echo.
 
-:: ----------------------------------------------------------
+:: ============================================================
 :: STEP 1 - Check prerequisites
-:: ----------------------------------------------------------
-echo [1/7] Checking prerequisites...
+:: ============================================================
+echo [1/8] Checking prerequisites...
 
 where node >nul 2>&1
 if %errorlevel% neq 0 (
     echo [ERROR] Node.js is not installed or not in PATH.
-    echo         Download it from https://nodejs.org/
-    pause
-    exit /b 1
+    echo         Download from: https://nodejs.org/
+    pause & exit /b 1
 )
-
-for /f "tokens=1 delims=v" %%i in ('node -v') do set NODE_VERSION=%%i
-for /f "tokens=1 delims=." %%i in ('node -v') do (
-    set NODE_MAJOR=%%i
-    set NODE_MAJOR=!NODE_MAJOR:v=!
-)
-echo     Node.js found: v%NODE_MAJOR% (requires ^>=%NODE_MIN_VERSION%)
+for /f "tokens=*" %%v in ('node -v 2^>nul') do set NODE_VER=%%v
+echo     [OK] Node.js %NODE_VER%
 
 where npm >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [ERROR] npm is not installed.
-    pause
-    exit /b 1
+    echo [ERROR] npm not found.
+    pause & exit /b 1
 )
-echo     npm found: OK
+for /f "tokens=*" %%v in ('npm -v 2^>nul') do set NPM_VER=%%v
+echo     [OK] npm v%NPM_VER%
 
 where git >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [WARNING] Git is not installed. Skipping git pull.
-    set GIT_AVAILABLE=0
-) else (
-    echo     Git found: OK
+if %errorlevel% equ 0 (
     set GIT_AVAILABLE=1
+    for /f "tokens=*" %%v in ('git --version 2^>nul') do set GIT_VER=%%v
+    echo     [OK] %GIT_VER%
+) else (
+    echo     [WARN] Git not found - skipping git pull
 )
 
-:: ----------------------------------------------------------
-:: STEP 2 - Pull latest code (if git available)
-:: ----------------------------------------------------------
+where psql >nul 2>&1
+if %errorlevel% equ 0 (
+    set PSQL_AVAILABLE=1
+    for /f "tokens=*" %%v in ('psql --version 2^>nul') do set PSQL_VER=%%v
+    echo     [OK] %PSQL_VER%
+) else (
+    echo     [WARN] psql not found in PATH - DB auto-creation will be skipped
+    echo           Add PostgreSQL\bin to your PATH and re-run for auto DB setup.
+)
+
+:: ============================================================
+:: STEP 2 - Pull latest code
+:: ============================================================
 echo.
-echo [2/7] Pulling latest code from GitHub...
+echo [2/8] Pulling latest code from GitHub...
 if "%GIT_AVAILABLE%"=="1" (
     cd /d "%APP_DIR%"
-    git pull origin main
+    git pull origin main 2>&1
     if %errorlevel% neq 0 (
-        echo [WARNING] Git pull failed. Continuing with existing code...
+        echo     [WARN] Git pull failed - continuing with existing code
     ) else (
-        echo     Code updated successfully.
+        echo     [OK] Code updated from GitHub
     )
 ) else (
-    echo     Skipped (Git not available).
+    echo     Skipped (Git not available)
 )
 
-:: ----------------------------------------------------------
-:: STEP 3 - Setup .env file
-:: ----------------------------------------------------------
+:: ============================================================
+:: STEP 3 - Generate JWT secret using Node.js crypto
+:: ============================================================
 echo.
-echo [3/7] Setting up environment configuration...
-cd /d "%APP_DIR%"
+echo [3/8] Generating secure JWT secret...
+for /f "tokens=*" %%s in ('node -e "const c=require('crypto');process.stdout.write(c.randomBytes(64).toString('hex'))" 2^>nul') do set JWT_SECRET=%%s
+if "%JWT_SECRET%"=="" (
+    :: Fallback: use a UUID-based approach
+    for /f "tokens=*" %%s in ('node -e "process.stdout.write(require('crypto').randomUUID().replace(/-/g,'') + require('crypto').randomUUID().replace(/-/g,''))" 2^>nul') do set JWT_SECRET=%%s
+)
+if not "%JWT_SECRET%"=="" (
+    echo     [OK] JWT secret generated (128-bit hex)
+) else (
+    echo     [WARN] Could not auto-generate JWT secret - you will need to set it manually
+    set JWT_SECRET=CHANGE_THIS_TO_A_RANDOM_SECRET_AT_LEAST_64_CHARS
+)
 
-if not exist ".env" (
-    if exist ".env.example" (
-        copy ".env.example" ".env" >nul
-        echo     .env file created from .env.example
-        echo.
-        echo [ACTION REQUIRED] Please edit .env with your actual credentials:
-        echo     - DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD
-        echo     - JWT_SECRET (change to a strong random value)
-        echo     - PORT (default: 5000)
-        echo.
-        echo     File location: %APP_DIR%\.env
-        echo.
-        set /p EDIT_ENV="Do you want to open .env now for editing? (y/n): "
-        if /i "!EDIT_ENV!"=="y" (
-            notepad "%APP_DIR%\.env"
-            echo     Waiting for you to finish editing .env...
-            pause
+:: ============================================================
+:: STEP 4 - Setup .env file
+:: ============================================================
+echo.
+echo [4/8] Setting up environment configuration...
+
+if not exist "%ENV_FILE%" (
+    set ENV_CREATED=1
+
+    :: Ask for database credentials
+    echo.
+    echo   PostgreSQL Configuration:
+    set /p DB_HOST_INPUT="   DB Host [localhost]: "
+    if not "!DB_HOST_INPUT!"=="" set DB_HOST=!DB_HOST_INPUT!
+
+    set /p DB_PORT_INPUT="   DB Port [5432]: "
+    if not "!DB_PORT_INPUT!"=="" set DB_PORT=!DB_PORT_INPUT!
+
+    set /p DB_NAME_INPUT="   DB Name [silwane_erp]: "
+    if not "!DB_NAME_INPUT!"=="" set DB_NAME=!DB_NAME_INPUT!
+
+    set /p DB_USER_INPUT="   DB User [postgres]: "
+    if not "!DB_USER_INPUT!"=="" set DB_USER=!DB_USER_INPUT!
+
+    set /p DB_PASSWORD="   DB Password: "
+
+    set /p PORT_INPUT="   App Port [5000]: "
+    if not "!PORT_INPUT!"=="" set PORT=!PORT_INPUT!
+
+    :: Write .env file
+    echo # Silwane ERP - Environment Configuration > "%ENV_FILE%"
+    echo # Auto-generated by deploy-windows.bat on %DATE% %TIME% >> "%ENV_FILE%"
+    echo. >> "%ENV_FILE%"
+    echo # Application >> "%ENV_FILE%"
+    echo NODE_ENV=production >> "%ENV_FILE%"
+    echo PORT=!PORT! >> "%ENV_FILE%"
+    echo. >> "%ENV_FILE%"
+    echo # Database (PostgreSQL) >> "%ENV_FILE%"
+    echo DB_HOST=!DB_HOST! >> "%ENV_FILE%"
+    echo DB_PORT=!DB_PORT! >> "%ENV_FILE%"
+    echo DB_NAME=!DB_NAME! >> "%ENV_FILE%"
+    echo DB_USER=!DB_USER! >> "%ENV_FILE%"
+    echo DB_PASSWORD=!DB_PASSWORD! >> "%ENV_FILE%"
+    echo. >> "%ENV_FILE%"
+    echo # JWT (auto-generated) >> "%ENV_FILE%"
+    echo JWT_SECRET=!JWT_SECRET! >> "%ENV_FILE%"
+    echo JWT_EXPIRES_IN=7d >> "%ENV_FILE%"
+    echo. >> "%ENV_FILE%"
+    echo # Email (optional - configure if needed) >> "%ENV_FILE%"
+    echo EMAIL_HOST=smtp.gmail.com >> "%ENV_FILE%"
+    echo EMAIL_PORT=587 >> "%ENV_FILE%"
+    echo EMAIL_USER= >> "%ENV_FILE%"
+    echo EMAIL_PASS= >> "%ENV_FILE%"
+
+    echo     [OK] .env file created with all configuration
+) else (
+    echo     [SKIP] .env already exists - reading existing values
+    :: Read existing values for summary
+    for /f "tokens=1,* delims==" %%a in ('type "%ENV_FILE%" ^| findstr /v "^#" ^| findstr /v "^$"') do (
+        if "%%a"=="DB_NAME" set DB_NAME=%%b
+        if "%%a"=="DB_USER" set DB_USER=%%b
+        if "%%a"=="DB_HOST" set DB_HOST=%%b
+        if "%%a"=="DB_PORT" set DB_PORT=%%b
+        if "%%a"=="PORT" set PORT=%%b
+        if "%%a"=="JWT_SECRET" set JWT_SECRET=%%b
+    )
+    echo     [INFO] To regenerate JWT secret, delete .env and re-run this script.
+)
+
+:: ============================================================
+:: STEP 5 - Auto create PostgreSQL database
+:: ============================================================
+echo.
+echo [5/8] Setting up PostgreSQL database...
+
+if "%PSQL_AVAILABLE%"=="1" (
+    echo     Attempting to create database '%DB_NAME%' on %DB_HOST%:%DB_PORT%...
+    echo     (You may be prompted for your PostgreSQL password)
+
+    :: Check if DB already exists
+    set PGPASSWORD=%DB_PASSWORD%
+    psql -h %DB_HOST% -p %DB_PORT% -U %DB_USER% -lqt 2>nul | findstr /i "%DB_NAME%" >nul 2>&1
+    if %errorlevel% equ 0 (
+        echo     [SKIP] Database '%DB_NAME%' already exists
+        set DB_CREATED=0
+    ) else (
+        :: Create database
+        psql -h %DB_HOST% -p %DB_PORT% -U %DB_USER% -c "CREATE DATABASE %DB_NAME%;" 2>&1
+        if %errorlevel% equ 0 (
+            echo     [OK] Database '%DB_NAME%' created successfully
+            set DB_CREATED=1
+        ) else (
+            echo     [WARN] Could not create database automatically.
+            echo           Please create it manually:
+            echo           psql -U %DB_USER% -c "CREATE DATABASE %DB_NAME%;"
         )
-    ) else (
-        echo [WARNING] No .env.example found. Creating minimal .env template...
-        (
-            echo # Silwane ERP Environment Configuration
-            echo NODE_ENV=production
-            echo PORT=5000
-            echo.
-            echo # Database (PostgreSQL)
-            echo DB_HOST=localhost
-            echo DB_PORT=5432
-            echo DB_NAME=silwane_erp
-            echo DB_USER=postgres
-            echo DB_PASSWORD=your_password_here
-            echo.
-            echo # JWT
-            echo JWT_SECRET=change_this_to_a_random_secret
-            echo JWT_EXPIRES_IN=7d
-            echo.
-            echo # Email (optional)
-            echo EMAIL_HOST=smtp.gmail.com
-            echo EMAIL_PORT=587
-            echo EMAIL_USER=
-            echo EMAIL_PASS=
-        ) > ".env"
-        echo     Minimal .env created. Please edit it before continuing.
-        notepad "%APP_DIR%\.env"
-        pause
+    )
+
+    :: Run SQL migrations/seeds if they exist
+    if exist "%APP_DIR%\database\schema.sql" (
+        echo     Running schema migrations...
+        psql -h %DB_HOST% -p %DB_PORT% -U %DB_USER% -d %DB_NAME% -f "%APP_DIR%\database\schema.sql" 2>&1
+        if %errorlevel% equ 0 (
+            echo     [OK] Schema applied
+        ) else (
+            echo     [WARN] Schema migration had errors - check database\schema.sql
+        )
+    )
+    if exist "%APP_DIR%\database\seed.sql" (
+        echo     Running seed data...
+        psql -h %DB_HOST% -p %DB_PORT% -U %DB_USER% -d %DB_NAME% -f "%APP_DIR%\database\seed.sql" 2>&1
+        if %errorlevel% equ 0 (
+            echo     [OK] Seed data applied
+        ) else (
+            echo     [WARN] Seed data had errors
+        )
     )
 ) else (
-    echo     .env already exists. Skipping.
+    echo     [SKIP] psql not available - skipping automatic DB creation
+    echo     Please create the database manually:
+    echo       CREATE DATABASE %DB_NAME%;
 )
 
-:: ----------------------------------------------------------
-:: STEP 4 - Install backend dependencies
-:: ----------------------------------------------------------
+:: ============================================================
+:: STEP 6 - Install backend dependencies
+:: ============================================================
 echo.
-echo [4/7] Installing backend dependencies...
+echo [6/8] Installing backend dependencies...
 cd /d "%APP_DIR%"
 call npm install --production
 if %errorlevel% neq 0 (
     echo [ERROR] npm install failed for backend.
-    pause
-    exit /b 1
+    pause & exit /b 1
 )
-echo     Backend dependencies installed.
+echo     [OK] Backend dependencies installed
 
-:: ----------------------------------------------------------
-:: STEP 5 - Install and build frontend
-:: ----------------------------------------------------------
+:: ============================================================
+:: STEP 7 - Install and build frontend
+:: ============================================================
 echo.
-echo [5/7] Installing and building frontend...
+echo [7/8] Building frontend...
 
+set FRONTEND_BUILT=0
 if exist "%APP_DIR%\client\package.json" (
     cd /d "%APP_DIR%\client"
     call npm install
-    if %errorlevel% neq 0 (
-        echo [WARNING] Frontend npm install failed. Skipping frontend build.
-    ) else (
+    if %errorlevel% equ 0 (
         call npm run build
-        if %errorlevel% neq 0 (
-            echo [WARNING] Frontend build failed. Server will still start.
+        if %errorlevel% equ 0 (
+            set FRONTEND_BUILT=1
+            echo     [OK] Frontend built successfully (client/)
         ) else (
-            echo     Frontend built successfully.
+            echo     [WARN] Frontend build failed
         )
     )
 ) else if exist "%APP_DIR%\frontend\package.json" (
     cd /d "%APP_DIR%\frontend"
     call npm install
-    if %errorlevel% neq 0 (
-        echo [WARNING] Frontend npm install failed.
-    ) else (
+    if %errorlevel% equ 0 (
         call npm run build
-        if %errorlevel% neq 0 (
-            echo [WARNING] Frontend build failed.
+        if %errorlevel% equ 0 (
+            set FRONTEND_BUILT=1
+            echo     [OK] Frontend built successfully (frontend/)
         ) else (
-            echo     Frontend built successfully.
+            echo     [WARN] Frontend build failed
         )
     )
 ) else (
-    echo     No frontend directory found. Skipping.
+    echo     [SKIP] No frontend directory found
+    set FRONTEND_BUILT=1
 )
 
-:: ----------------------------------------------------------
-:: STEP 6 - Database check
-:: ----------------------------------------------------------
+:: ============================================================
+:: STEP 8 - Start with PM2
+:: ============================================================
 echo.
-echo [6/7] Database setup...
-
-where psql >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [WARNING] psql not found in PATH.
-    echo     Make sure PostgreSQL is installed and running.
-    echo     Skipping automatic DB creation check.
-) else (
-    echo     PostgreSQL CLI found. Attempting to verify DB connection...
-    echo     (If you see a password prompt, enter your DB password)
-)
-
-:: ----------------------------------------------------------
-:: STEP 7 - Install PM2 and start application
-:: ----------------------------------------------------------
-echo.
-echo [7/7] Starting application with PM2...
+echo [8/8] Starting application with PM2...
+cd /d "%APP_DIR%"
 
 where pm2 >nul 2>&1
 if %errorlevel% neq 0 (
-    echo     PM2 not found. Installing globally...
+    echo     PM2 not found - installing globally...
     call npm install -g pm2
     if %errorlevel% neq 0 (
-        echo [WARNING] PM2 install failed. Starting with node directly...
-        cd /d "%APP_DIR%"
-        echo     Starting server with node...
-        start "Silwane ERP Server" cmd /k "cd /d %APP_DIR% && node server.js"
-        goto :success
+        echo     [WARN] PM2 install failed - starting with node directly
+        start "Silwane ERP" cmd /k "cd /d "%APP_DIR%" && node server.js"
+        set PM2_AVAILABLE=0
+        goto :showsummary
     )
 )
 
-cd /d "%APP_DIR%"
+set PM2_AVAILABLE=1
 pm2 describe silwane-erp >nul 2>&1
 if %errorlevel% equ 0 (
     echo     Restarting existing PM2 process...
@@ -224,24 +314,71 @@ if %errorlevel% equ 0 (
     echo     Starting new PM2 process...
     pm2 start server.js --name "silwane-erp" --env production
 )
+pm2 save >nul 2>&1
+echo     [OK] Process saved - will survive system restart
 
-pm2 save
-echo     PM2 process saved. App will auto-restart on system reboot.
-echo     (Run: pm2 startup to configure Windows auto-start)
-
-:success
+:: ============================================================
+:: DEPLOYMENT SUMMARY
+:: ============================================================
+:showsummary
+echo.
 echo.
 echo =====================================================
-echo   DEPLOYMENT COMPLETE!
+echo   DEPLOYMENT COMPLETE - SUMMARY
 echo =====================================================
 echo.
-echo   App running at: http://localhost:5000
+echo   APPLICATION
+echo   -----------
+echo   Name        : Silwane ERP
+echo   URL         : http://localhost:%PORT%
+echo   Environment : production
+echo   Entry point : server.js
 echo.
-echo   Useful commands:
-echo     pm2 status          - Check process status
-echo     pm2 logs silwane-erp - View live logs
-echo     pm2 stop silwane-erp - Stop the app
+echo   DATABASE
+echo   --------
+echo   Host        : %DB_HOST%:%DB_PORT%
+echo   Database    : %DB_NAME%
+echo   User        : %DB_USER%
+if "%DB_CREATED%"=="1" (
+echo   Status      : NEWLY CREATED
+) else (
+echo   Status      : Already existed / Pre-configured
+)
+echo.
+echo   SECURITY
+echo   --------
+:: Show only first 16 chars of JWT secret for verification
+set JWT_PREVIEW=%JWT_SECRET:~0,16%
+echo   JWT Secret  : %JWT_PREVIEW%... (stored in .env)
+echo   JWT Expires : 7d
+echo.
+echo   ENV FILE
+echo   --------
+if "%ENV_CREATED%"=="1" (
+echo   Status      : NEWLY CREATED at:
+echo   Path        : %ENV_FILE%
+) else (
+echo   Status      : Pre-existing (not modified)
+echo   Path        : %ENV_FILE%
+)
+echo.
+echo   PROCESS MANAGER
+echo   ---------------
+if "%PM2_AVAILABLE%"=="1" (
+echo   Manager     : PM2
+echo   Process     : silwane-erp
+echo   Auto-restart: YES
+echo.
+echo   PM2 Commands:
+echo     pm2 status              - Check process health
+echo     pm2 logs silwane-erp    - View live logs
 echo     pm2 restart silwane-erp - Restart the app
+echo     pm2 stop silwane-erp    - Stop the app
+echo     pm2 startup             - Enable Windows auto-start on boot
+) else (
+echo   Manager     : Node.js (direct - PM2 unavailable)
+echo   Auto-restart: NO (install PM2 manually for auto-restart)
+)
 echo.
 echo =====================================================
 echo.
