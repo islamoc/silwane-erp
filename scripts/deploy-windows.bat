@@ -5,52 +5,68 @@ chcp 65001 >nul
 
 :: ============================================================
 ::  Silwane ERP - Windows Auto Deployment Script
-::  Author: Mennouchi Islam Azeddine
-::  Version: 3.0
+::  Author : Mennouchi Islam Azeddine
+::  Version: 4.0
+::
 ::  Steps:
-::    1. Prerequisite checks (Node, npm, Git, psql)
-::    2. Git pull latest code
-::    3. Generate secure JWT secret
-::    4. Setup .env file (interactive)
-::    5. Create PostgreSQL database + run migrations
-::    6. Install backend dependencies
-::    7. Build frontend
-::    8. Create initial admin account  <-- NEW
-::    9. Start app with PM2
-::   10. Full deployment summary
+::    1.  Prerequisite checks (Node, npm, Git, psql)
+::    2.  Git pull latest code
+::    3.  Generate secure JWT secret
+::    4.  Setup backend .env
+::    5.  Create PostgreSQL database + run migrations
+::    6.  Install backend dependencies
+::    7.  Setup frontend .env  (REACT_APP_API_URL, etc.)
+::    8.  Install frontend dependencies
+::    9.  Build frontend (React production build)
+::   10.  Create initial admin account
+::   11.  Start backend  with PM2 (silwane-erp-api)
+::   12.  Start frontend with PM2 + serve (silwane-erp-ui)
+::   13.  Full deployment summary + open browser
 :: ============================================================
 
 set "APP_DIR=%~dp0.."
-set "ENV_FILE=%APP_DIR%\.env"
+set "FRONTEND_DIR=%APP_DIR%\frontend"
 set "SCRIPTS_DIR=%APP_DIR%\scripts"
+set "ENV_FILE=%APP_DIR%\.env"
+set "FE_ENV_FILE=%FRONTEND_DIR%\.env"
+
+:: Defaults
 set "PORT=5000"
+set "FE_PORT=3000"
 set "DB_HOST=localhost"
 set "DB_PORT=5432"
 set "DB_NAME=silwane_erp"
 set "DB_USER=postgres"
 set "DB_PASSWORD="
 set "JWT_SECRET="
+set "API_URL=http://localhost:5000"
+
+:: Status flags
 set "GIT_AVAILABLE=0"
 set "PSQL_AVAILABLE=0"
 set "PM2_AVAILABLE=0"
+set "SERVE_AVAILABLE=0"
 set "DB_CREATED=0"
 set "ENV_CREATED=0"
+set "FE_ENV_CREATED=0"
+set "FE_BUILT=0"
+set "FE_RUNNING=0"
 set "ADMIN_CREATED=0"
 
 echo.
 echo =====================================================
-echo   SILWANE ERP - Windows Auto Deployment v3.0
+echo   SILWANE ERP - Windows Auto Deployment v4.0
 echo =====================================================
 echo.
 
 :: ============================================================
-:: STEP 1 - Check prerequisites
+:: STEP 1 - Prerequisite checks
 :: ============================================================
-echo [1/9] Checking prerequisites...
+echo [1/12] Checking prerequisites...
 
 where node >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [ERROR] Node.js is not installed. Download: https://nodejs.org/
+    echo [ERROR] Node.js not found. Download: https://nodejs.org/
     pause & exit /b 1
 )
 for /f "tokens=*" %%v in ('node -v 2^>nul') do set NODE_VER=%%v
@@ -64,112 +80,103 @@ echo     [OK] npm v%NPM_VER%
 where git >nul 2>&1
 if %errorlevel% equ 0 (
     set GIT_AVAILABLE=1
-    for /f "tokens=*" %%v in ('git --version 2^>nul') do set GIT_VER=%%v
-    echo     [OK] %GIT_VER%
-) else (
-    echo     [WARN] Git not found - skipping pull
-)
+    for /f "tokens=*" %%v in ('git --version 2^>nul') do echo     [OK] %%v
+) else ( echo     [WARN] Git not found - skipping pull )
 
 where psql >nul 2>&1
 if %errorlevel% equ 0 (
     set PSQL_AVAILABLE=1
-    for /f "tokens=*" %%v in ('psql --version 2^>nul') do set PSQL_VER=%%v
-    echo     [OK] %PSQL_VER%
-) else (
-    echo     [WARN] psql not in PATH - DB auto-creation will be skipped
-)
+    for /f "tokens=*" %%v in ('psql --version 2^>nul') do echo     [OK] %%v
+) else ( echo     [WARN] psql not in PATH - DB auto-creation skipped )
 
 :: ============================================================
-:: STEP 2 - Pull latest code
+:: STEP 2 - Git pull
 :: ============================================================
 echo.
-echo [2/9] Pulling latest code from GitHub...
+echo [2/12] Pulling latest code...
 if "%GIT_AVAILABLE%"=="1" (
     cd /d "%APP_DIR%"
     git pull origin main 2>&1
-    if %errorlevel% neq 0 (
-        echo     [WARN] Git pull failed - continuing with existing code
-    ) else (
-        echo     [OK] Code updated
-    )
-) else (
-    echo     Skipped
-)
+    if %errorlevel% equ 0 ( echo     [OK] Code updated ) else ( echo     [WARN] Git pull failed - using existing code )
+) else ( echo     Skipped )
 
 :: ============================================================
 :: STEP 3 - Generate JWT secret
 :: ============================================================
 echo.
-echo [3/9] Generating secure JWT secret...
+echo [3/12] Generating JWT secret...
 for /f "tokens=*" %%s in ('node -e "const c=require('crypto');process.stdout.write(c.randomBytes(64).toString('hex'))" 2^>nul') do set JWT_SECRET=%%s
 if "%JWT_SECRET%"=="" (
-    set JWT_SECRET=CHANGE_THIS_TO_A_RANDOM_SECRET_AT_LEAST_64_CHARS
-    echo     [WARN] Could not auto-generate - set JWT_SECRET manually in .env
+    set JWT_SECRET=CHANGE_THIS_MANUALLY_TO_A_64CHAR_RANDOM_STRING
+    echo     [WARN] Auto-generation failed - set JWT_SECRET manually in .env
 ) else (
-    echo     [OK] JWT secret generated ^(128-bit hex^)
+    echo     [OK] JWT secret generated ^(256-bit^)
 )
 
 :: ============================================================
-:: STEP 4 - Setup .env file
+:: STEP 4 - Backend .env setup
 :: ============================================================
 echo.
-echo [4/9] Setting up environment configuration...
+echo [4/12] Setting up backend environment...
 
 if not exist "%ENV_FILE%" (
     set ENV_CREATED=1
     echo.
-    echo   PostgreSQL Configuration:
-    set /p DB_HOST_IN="   DB Host [localhost]: "
+    echo   --- Backend Configuration ---
+    set /p DB_HOST_IN="   DB Host      [localhost]  : "
     if not "!DB_HOST_IN!"=="" set DB_HOST=!DB_HOST_IN!
-    set /p DB_PORT_IN="   DB Port [5432]: "
+    set /p DB_PORT_IN="   DB Port      [5432]       : "
     if not "!DB_PORT_IN!"=="" set DB_PORT=!DB_PORT_IN!
-    set /p DB_NAME_IN="   DB Name [silwane_erp]: "
+    set /p DB_NAME_IN="   DB Name      [silwane_erp]: "
     if not "!DB_NAME_IN!"=="" set DB_NAME=!DB_NAME_IN!
-    set /p DB_USER_IN="   DB User [postgres]: "
+    set /p DB_USER_IN="   DB User      [postgres]   : "
     if not "!DB_USER_IN!"=="" set DB_USER=!DB_USER_IN!
-    set /p DB_PASSWORD="   DB Password: "
-    set /p PORT_IN="   App Port [5000]: "
+    set /p DB_PASSWORD="   DB Password               : "
+    set /p PORT_IN="   Backend Port [5000]       : "
     if not "!PORT_IN!"=="" set PORT=!PORT_IN!
+    set API_URL=http://localhost:!PORT!
 
-    echo # Silwane ERP - Environment Configuration > "%ENV_FILE%"
-    echo # Auto-generated by deploy-windows.bat on %DATE% %TIME% >> "%ENV_FILE%"
-    echo. >> "%ENV_FILE%"
-    echo NODE_ENV=production >> "%ENV_FILE%"
-    echo PORT=!PORT! >> "%ENV_FILE%"
-    echo. >> "%ENV_FILE%"
-    echo DB_HOST=!DB_HOST! >> "%ENV_FILE%"
-    echo DB_PORT=!DB_PORT! >> "%ENV_FILE%"
-    echo DB_NAME=!DB_NAME! >> "%ENV_FILE%"
-    echo DB_USER=!DB_USER! >> "%ENV_FILE%"
-    echo DB_PASSWORD=!DB_PASSWORD! >> "%ENV_FILE%"
-    echo. >> "%ENV_FILE%"
-    echo JWT_SECRET=!JWT_SECRET! >> "%ENV_FILE%"
-    echo JWT_EXPIRES_IN=7d >> "%ENV_FILE%"
-    echo. >> "%ENV_FILE%"
-    echo EMAIL_HOST=smtp.gmail.com >> "%ENV_FILE%"
-    echo EMAIL_PORT=587 >> "%ENV_FILE%"
-    echo EMAIL_USER= >> "%ENV_FILE%"
-    echo EMAIL_PASS= >> "%ENV_FILE%"
-
-    echo     [OK] .env created
+    (
+        echo # Silwane ERP - Backend Environment
+        echo # Auto-generated by deploy-windows.bat on %DATE% %TIME%
+        echo.
+        echo NODE_ENV=production
+        echo PORT=!PORT!
+        echo.
+        echo DB_HOST=!DB_HOST!
+        echo DB_PORT=!DB_PORT!
+        echo DB_NAME=!DB_NAME!
+        echo DB_USER=!DB_USER!
+        echo DB_PASSWORD=!DB_PASSWORD!
+        echo.
+        echo JWT_SECRET=!JWT_SECRET!
+        echo JWT_EXPIRES_IN=7d
+        echo.
+        echo EMAIL_HOST=smtp.gmail.com
+        echo EMAIL_PORT=587
+        echo EMAIL_USER=
+        echo EMAIL_PASS=
+    ) > "%ENV_FILE%"
+    echo     [OK] Backend .env created
 ) else (
-    echo     [SKIP] .env already exists - reading existing values
+    echo     [SKIP] Backend .env exists - reading values
     for /f "tokens=1,* delims==" %%a in ('type "%ENV_FILE%" ^| findstr /v "^#" ^| findstr /v "^$"') do (
         if "%%a"=="DB_NAME"     set DB_NAME=%%b
         if "%%a"=="DB_USER"     set DB_USER=%%b
         if "%%a"=="DB_HOST"     set DB_HOST=%%b
         if "%%a"=="DB_PORT"     set DB_PORT=%%b
         if "%%a"=="PORT"        set PORT=%%b
-        if "%%a"=="JWT_SECRET"  set JWT_SECRET=%%b
         if "%%a"=="DB_PASSWORD" set DB_PASSWORD=%%b
+        if "%%a"=="JWT_SECRET"  set JWT_SECRET=%%b
     )
+    set API_URL=http://localhost:!PORT!
 )
 
 :: ============================================================
-:: STEP 5 - Create PostgreSQL database + run migrations
+:: STEP 5 - PostgreSQL database creation + migrations
 :: ============================================================
 echo.
-echo [5/9] Setting up PostgreSQL database...
+echo [5/12] Setting up PostgreSQL database...
 
 if "%PSQL_AVAILABLE%"=="1" (
     set PGPASSWORD=%DB_PASSWORD%
@@ -178,21 +185,16 @@ if "%PSQL_AVAILABLE%"=="1" (
         echo     [SKIP] Database '%DB_NAME%' already exists
     ) else (
         psql -h %DB_HOST% -p %DB_PORT% -U %DB_USER% -c "CREATE DATABASE %DB_NAME%;" >nul 2>&1
-        if %errorlevel% equ 0 (
-            echo     [OK] Database '%DB_NAME%' created
-            set DB_CREATED=1
-        ) else (
-            echo     [WARN] Could not create database - create it manually:
-            echo           psql -U %DB_USER% -c "CREATE DATABASE %DB_NAME%;"
-        )
+        if %errorlevel% equ 0 ( echo     [OK] Database '%DB_NAME%' created & set DB_CREATED=1
+        ) else ( echo     [WARN] Could not auto-create DB. Run: psql -U %DB_USER% -c "CREATE DATABASE %DB_NAME%;" )
     )
     if exist "%APP_DIR%\database\schema.sql" (
         psql -h %DB_HOST% -p %DB_PORT% -U %DB_USER% -d %DB_NAME% -f "%APP_DIR%\database\schema.sql" >nul 2>&1
-        if %errorlevel% equ 0 ( echo     [OK] Schema applied ) else ( echo     [WARN] Schema had errors )
+        if %errorlevel% equ 0 ( echo     [OK] Schema applied ) else ( echo     [WARN] Schema errors )
     )
     if exist "%APP_DIR%\database\seed.sql" (
         psql -h %DB_HOST% -p %DB_PORT% -U %DB_USER% -d %DB_NAME% -f "%APP_DIR%\database\seed.sql" >nul 2>&1
-        if %errorlevel% equ 0 ( echo     [OK] Seed data applied ) else ( echo     [WARN] Seed had errors )
+        if %errorlevel% equ 0 ( echo     [OK] Seed data applied ) else ( echo     [WARN] Seed errors )
     )
 ) else (
     echo     [SKIP] psql not available
@@ -202,51 +204,130 @@ if "%PSQL_AVAILABLE%"=="1" (
 :: STEP 6 - Install backend dependencies
 :: ============================================================
 echo.
-echo [6/9] Installing backend dependencies...
+echo [6/12] Installing backend dependencies...
 cd /d "%APP_DIR%"
 call npm install --production
-if %errorlevel% neq 0 ( echo [ERROR] npm install failed. & pause & exit /b 1 )
-echo     [OK] Dependencies installed
+if %errorlevel% neq 0 ( echo [ERROR] Backend npm install failed. & pause & exit /b 1 )
+echo     [OK] Backend dependencies installed
 
 :: ============================================================
-:: STEP 7 - Build frontend
+:: STEP 7 - Frontend .env setup
 :: ============================================================
 echo.
-echo [7/9] Building frontend...
-set FRONTEND_BUILT=0
-if exist "%APP_DIR%\client\package.json" (
-    cd /d "%APP_DIR%\client"
-    call npm install >nul 2>&1 && call npm run build >nul 2>&1
-    if %errorlevel% equ 0 ( set FRONTEND_BUILT=1 & echo     [OK] Frontend built ) else ( echo     [WARN] Frontend build failed )
-) else if exist "%APP_DIR%\frontend\package.json" (
-    cd /d "%APP_DIR%\frontend"
-    call npm install >nul 2>&1 && call npm run build >nul 2>&1
-    if %errorlevel% equ 0 ( set FRONTEND_BUILT=1 & echo     [OK] Frontend built ) else ( echo     [WARN] Frontend build failed )
+echo [7/12] Setting up frontend environment...
+
+if not exist "%FRONTEND_DIR%" (
+    echo     [SKIP] No frontend\ directory found
+    goto :step8
+)
+
+if not exist "%FE_ENV_FILE%" (
+    set FE_ENV_CREATED=1
+    echo.
+    echo   --- Frontend Configuration ---
+    set /p FE_PORT_IN="   Frontend Port [3000]                       : "
+    if not "!FE_PORT_IN!"=="" set FE_PORT=!FE_PORT_IN!
+    set /p API_URL_IN="   Backend API URL [http://localhost:%PORT%]: "
+    if not "!API_URL_IN!"=="" set API_URL=!API_URL_IN!
+
+    (
+        echo # Silwane ERP - Frontend Environment
+        echo # Auto-generated by deploy-windows.bat on %DATE% %TIME%
+        echo REACT_APP_API_URL=!API_URL!
+        echo REACT_APP_NAME=Silwane ERP
+        echo REACT_APP_COMPANY=GK PRO STONES
+        echo REACT_APP_VERSION=1.0.0
+        echo PORT=!FE_PORT!
+    ) > "%FE_ENV_FILE%"
+    echo     [OK] Frontend .env created
+    echo         REACT_APP_API_URL = !API_URL!
+    echo         PORT              = !FE_PORT!
 ) else (
-    echo     [SKIP] No frontend directory found
+    echo     [SKIP] Frontend .env already exists - reading values
+    for /f "tokens=1,* delims==" %%a in ('type "%FE_ENV_FILE%" ^| findstr /v "^#" ^| findstr /v "^$"') do (
+        if "%%a"=="PORT"              set FE_PORT=%%b
+        if "%%a"=="REACT_APP_API_URL" set API_URL=%%b
+    )
+    echo         REACT_APP_API_URL = !API_URL!
+    echo         PORT              = !FE_PORT!
 )
 
 :: ============================================================
-:: STEP 8 - Create initial admin account
+:: STEP 8 - Install frontend dependencies
 :: ============================================================
+:step8
 echo.
-echo [8/9] Setting up initial admin account...
-cd /d "%APP_DIR%"
+echo [8/12] Installing frontend dependencies...
 
+if not exist "%FRONTEND_DIR%\package.json" (
+    echo     [SKIP] No frontend/package.json
+    goto :step9
+)
+
+cd /d "%FRONTEND_DIR%"
+call npm install
+if %errorlevel% neq 0 (
+    echo     [ERROR] Frontend npm install failed - skipping build
+    goto :step9
+)
+echo     [OK] Frontend packages installed ^(React, MUI, Recharts, axios...^)
+
+:: ============================================================
+:: STEP 9 - Build React frontend for production
+:: ============================================================
+:step9
+echo.
+echo [9/12] Building React frontend ^(production^)...
+
+if not exist "%FRONTEND_DIR%\package.json" (
+    echo     [SKIP] No frontend to build
+    goto :step10
+)
+
+cd /d "%FRONTEND_DIR%"
+echo     Running: npm run build  ^(React + MUI - may take 1-3 minutes...^)
+call npm run build
+if %errorlevel% neq 0 (
+    echo     [ERROR] React build failed.
+    echo             Check frontend\src for compilation errors.
+    echo             Backend will start without the UI.
+    goto :step10
+)
+
+set FE_BUILT=1
+echo     [OK] React build complete  =^>  frontend\build\
+
+:: If backend has a /public folder, copy the build there so Express serves it
+if exist "%APP_DIR%\public" (
+    echo     Copying build into backend public\ folder...
+    xcopy /E /I /Y "%FRONTEND_DIR%\build\*" "%APP_DIR%\public\" >nul 2>&1
+    if %errorlevel% equ 0 (
+        echo     [OK] Build synced to public\ ^(served by Express at http://localhost:%PORT%^)
+    ) else (
+        echo     [WARN] xcopy failed - UI will be served separately on port %FE_PORT%
+    )
+)
+
+:: ============================================================
+:: STEP 10 - Create initial admin account
+:: ============================================================
+:step10
+echo.
+echo [10/12] Setting up initial admin account...
+cd /d "%APP_DIR%"
 node "%SCRIPTS_DIR%\create-admin.js"
 if %errorlevel% equ 0 (
     set ADMIN_CREATED=1
 ) else (
-    echo     [WARN] Admin setup exited with an error.
-    echo           You can run it manually later:
-    echo           node scripts/create-admin.js
+    echo     [WARN] Admin setup exited with error or was skipped.
+    echo           Run manually: node scripts/create-admin.js
 )
 
 :: ============================================================
-:: STEP 9 - Start with PM2
+:: STEP 11 - Start backend with PM2
 :: ============================================================
 echo.
-echo [9/9] Starting application with PM2...
+echo [11/12] Starting backend with PM2...
 cd /d "%APP_DIR%"
 
 where pm2 >nul 2>&1
@@ -258,81 +339,148 @@ if %errorlevel% neq 0 (
 where pm2 >nul 2>&1
 if %errorlevel% equ 0 (
     set PM2_AVAILABLE=1
-    pm2 describe silwane-erp >nul 2>&1
+    pm2 describe silwane-erp-api >nul 2>&1
     if %errorlevel% equ 0 (
-        pm2 restart silwane-erp
+        pm2 restart silwane-erp-api
+        echo     [OK] Backend restarted  ^(silwane-erp-api^)
     ) else (
-        pm2 start server.js --name "silwane-erp" --env production
+        pm2 start server.js --name "silwane-erp-api" --env production
+        echo     [OK] Backend started   ^(silwane-erp-api^)  ->  http://localhost:%PORT%
     )
-    pm2 save >nul 2>&1
-    echo     [OK] App started via PM2
 ) else (
-    echo     [WARN] PM2 unavailable - starting with node directly
-    start "Silwane ERP" cmd /k "cd /d "%APP_DIR%" && node server.js"
+    echo     [WARN] PM2 unavailable - starting backend in new CMD window
+    start "Silwane ERP API" cmd /k "cd /d "%APP_DIR%" && node server.js"
 )
 
 :: ============================================================
-:: STEP 10 - Deployment Summary
+:: STEP 12 - Serve frontend with PM2 + 'serve'
 :: ============================================================
 echo.
+echo [12/12] Starting frontend...
+
+if "%FE_BUILT%"=="0" (
+    echo     [SKIP] Frontend was not built successfully
+    goto :summary
+)
+
+:: Install 'serve' globally if missing
+where serve >nul 2>&1
+if %errorlevel% neq 0 (
+    echo     Installing 'serve' package globally...
+    call npm install -g serve
+)
+
+where serve >nul 2>&1
+if %errorlevel% equ 0 (
+    set SERVE_AVAILABLE=1
+    if "%PM2_AVAILABLE%"=="1" (
+        pm2 describe silwane-erp-ui >nul 2>&1
+        if %errorlevel% equ 0 (
+            pm2 restart silwane-erp-ui
+            echo     [OK] Frontend restarted ^(silwane-erp-ui^)
+        ) else (
+            pm2 start "serve" --name "silwane-erp-ui" -- -s "%FRONTEND_DIR%\build" -l %FE_PORT%
+            echo     [OK] Frontend started  ^(silwane-erp-ui^)   ->  http://localhost:%FE_PORT%
+        )
+        pm2 save >nul 2>&1
+        echo     [OK] Both PM2 processes saved ^(survive reboot^)
+    ) else (
+        start "Silwane ERP UI" cmd /k "serve -s "%FRONTEND_DIR%\build" -l %FE_PORT%"
+        echo     [OK] Frontend serving in new window  ->  http://localhost:%FE_PORT%
+    )
+    set FE_RUNNING=1
+) else (
+    echo     [WARN] 'serve' could not be installed.
+    echo           Serve manually: npx serve -s frontend\build -l %FE_PORT%
+)
+
+:: Wait briefly for processes to initialize
+timeout /t 3 /nobreak >nul
+
+:: ============================================================
+:: DEPLOYMENT SUMMARY
+:: ============================================================
+:summary
+echo.
 echo.
 echo =====================================================
-echo   DEPLOYMENT COMPLETE - SUMMARY
+echo   DEPLOYMENT COMPLETE - FULL SUMMARY
 echo =====================================================
 echo.
-echo   APPLICATION
-echo   -----------
-echo   Name        : Silwane ERP
-echo   URL         : http://localhost:%PORT%
-echo   Environment : production
-echo   Entry point : server.js
+echo   BACKEND
+echo   -------
+echo   Process : silwane-erp-api  ^(PM2^)
+echo   URL     : http://localhost:%PORT%
+echo   Entry   : server.js
+echo.
+echo   FRONTEND  ^(React 18 + MUI + Recharts^)
+echo   ----------------------------------
+if "%FE_BUILT%"=="1" (
+    echo   Build   : frontend\build\  [READY]
+    if "%FE_RUNNING%"=="1" (
+        echo   Process : silwane-erp-ui  ^(PM2 + serve^)
+        echo   URL     : http://localhost:%FE_PORT%
+        echo   Proxy   : -^> http://localhost:%PORT%  ^(API^)
+    ) else (
+        echo   Process : NOT STARTED
+        echo   Manual  : npx serve -s frontend\build -l %FE_PORT%
+    )
+) else (
+    echo   Build   : FAILED or SKIPPED
+    echo   Action  : Fix errors in frontend\src and re-run
+)
 echo.
 echo   DATABASE
 echo   --------
-echo   Host        : %DB_HOST%:%DB_PORT%
-echo   Database    : %DB_NAME%
-echo   User        : %DB_USER%
-if "%DB_CREATED%"=="1" (
-    echo   Status      : NEWLY CREATED
-) else (
-    echo   Status      : Pre-existing
-)
+echo   Host    : %DB_HOST%:%DB_PORT%
+echo   Name    : %DB_NAME%
+echo   User    : %DB_USER%
+if "%DB_CREATED%"=="1" ( echo   Status  : NEWLY CREATED ) else ( echo   Status  : Pre-existing )
 echo.
 echo   SECURITY
 echo   --------
 set JWT_PREVIEW=%JWT_SECRET:~0,16%
-echo   JWT Secret  : %JWT_PREVIEW%... ^(full value in .env^)
-echo   JWT Expires : 7d
+echo   JWT     : %JWT_PREVIEW%...  ^(full value in .env^)
+echo   Expires : 7d
 echo.
-echo   ENV FILE
-echo   --------
-if "%ENV_CREATED%"=="1" (
-    echo   Status      : NEWLY CREATED
-) else (
-    echo   Status      : Pre-existing
-)
-echo   Path        : %ENV_FILE%
+echo   ENV FILES
+echo   ---------
+if "%ENV_CREATED%"=="1"    ( echo   Backend : CREATED  -  %ENV_FILE% ) else ( echo   Backend : Pre-existing )
+if "%FE_ENV_CREATED%"=="1" ( echo   Frontend: CREATED  -  %FE_ENV_FILE% ) else ( echo   Frontend: Pre-existing )
 echo.
 echo   ADMIN ACCOUNT
 echo   -------------
 if "%ADMIN_CREATED%"=="1" (
-    echo   Status      : Created ^(see credentials above^)
-    echo   Login URL   : http://localhost:%PORT%
+    echo   Status  : Created  ^(credentials shown above^)
 ) else (
-    echo   Status      : Skipped or already existed
-    echo   Manual cmd  : node scripts/create-admin.js
+    echo   Status  : Skipped / already existed
+    echo   Recreate: node scripts/create-admin.js
 )
 echo.
-echo   PROCESS MANAGER
-echo   ---------------
-if "%PM2_AVAILABLE%"=="1" (
-    echo   Manager     : PM2  ^(auto-restart ON^)
-    echo   Commands    : pm2 status ^| pm2 logs silwane-erp ^| pm2 restart silwane-erp
-    echo   Auto-boot   : run ^'pm2 startup^' to enable Windows auto-start
-) else (
-    echo   Manager     : node ^(direct - install PM2 for auto-restart^)
-)
+echo   PM2 COMMANDS
+echo   ------------
+echo   pm2 status                  - View all processes
+echo   pm2 logs silwane-erp-api    - Backend live logs
+echo   pm2 logs silwane-erp-ui     - Frontend live logs
+echo   pm2 restart all             - Restart everything
+echo   pm2 stop all                - Stop everything
+echo   pm2 startup                 - Enable auto-start on Windows boot
+echo.
+echo   QUICK LINKS
+echo   -----------
+echo   App      : http://localhost:%FE_PORT%
+echo   API      : http://localhost:%PORT%/api
 echo.
 echo =====================================================
 echo.
+
+:: Open browser automatically on the frontend URL
+if "%FE_RUNNING%"=="1" (
+    echo Opening app in browser...
+    timeout /t 2 /nobreak >nul
+    start http://localhost:%FE_PORT%
+) else (
+    start http://localhost:%PORT%
+)
+
 pause
