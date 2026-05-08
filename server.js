@@ -30,10 +30,8 @@ const app = express();
 // MIDDLEWARE
 // =====================================================
 
-// Security middleware
 app.use(helmet());
 
-// CORS configuration
 const corsOptions = {
   origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
   credentials: true,
@@ -41,25 +39,20 @@ const corsOptions = {
 };
 app.use(cors(corsOptions));
 
-// Compression middleware
 app.use(compression());
 
-// Body parsing middleware
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Rate limiting
 const limiter = rateLimit({
-  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000, // 15 minutes
+  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
   max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100,
   message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true,
   legacyHeaders: false
 });
-
 app.use('/api/', limiter);
 
-// Request logging middleware
 app.use((req, res, next) => {
   logger.info(`${req.method} ${req.path}`, {
     ip: req.ip,
@@ -72,7 +65,6 @@ app.use((req, res, next) => {
 // ROUTES
 // =====================================================
 
-// Health check
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'OK',
@@ -82,7 +74,6 @@ app.get('/health', (req, res) => {
   });
 });
 
-// API routes - Updated to use correct route modules
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/products', productRoutes);
@@ -97,7 +88,6 @@ app.use('/api/analytics', analyticsRoutes);
 app.use('/api/interface', interfaceRoutes);
 app.use('/api/statistics', statisticsRoutes);
 
-// Root route
 app.get('/', (req, res) => {
   res.json({
     name: 'Silwane ERP API',
@@ -132,60 +122,97 @@ app.get('/', (req, res) => {
   });
 });
 
-// 404 handler
 app.use((req, res) => {
-  res.status(404).json({
-    success: false,
-    message: 'Route not found'
-  });
+  res.status(404).json({ success: false, message: 'Route not found' });
 });
 
-// Error handling middleware (must be last)
 app.use(errorHandler);
 
 // =====================================================
 // SERVER STARTUP
 // =====================================================
 
-const PORT = process.env.PORT || 5000;
+const PORT = parseInt(process.env.PORT, 10) || 5000;
+
+// Stored so shutdown handlers can call server.close()
+let server;
 
 const startServer = async () => {
   try {
-    // Test database connection
     await testConnection();
     logger.info('Database connection established successfully');
 
-    // Start server
-    app.listen(PORT, () => {
+    server = app.listen(PORT, () => {
       logger.info(`Server running on port ${PORT} in ${process.env.NODE_ENV || 'development'} mode`);
-      console.log(`\n🚀 Silwane ERP Server Started`);
-      console.log(`📋 Proforma: FP26002386`);
-      console.log(`🏢 Client: GK PRO STONES, Constantine`);
-      console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
-      console.log(`💻 Server: http://localhost:${PORT}`);
-      console.log(`📊 API: http://localhost:${PORT}/api`);
-      console.log(`✅ Health Check: http://localhost:${PORT}/health`);
-      console.log(`\n✨ All 29 features implemented and ready!\n`);
+      console.log(`\n\uD83D\uDE80 Silwane ERP Server Started`);
+      console.log(`\uD83D\uDCCB Proforma: FP26002386`);
+      console.log(`\uD83C\uDFE2 Client: GK PRO STONES, Constantine`);
+      console.log(`\uD83C\uDF0D Environment: ${process.env.NODE_ENV || 'development'}`);
+      console.log(`\uD83D\uDCBB Server: http://localhost:${PORT}`);
+      console.log(`\uD83D\uDCCA API: http://localhost:${PORT}/api`);
+      console.log(`\u2705 Health Check: http://localhost:${PORT}/health`);
+      console.log(`\n\u2728 All 29 features implemented and ready!\n`);
     });
+
+    // -------------------------------------------------------
+    // Graceful EADDRINUSE handler
+    // Attaching to the server 'error' event prevents Node from
+    // throwing an unhandled exception and gives the user a
+    // clear, actionable message instead of a raw stack trace.
+    // -------------------------------------------------------
+    server.on('error', (err) => {
+      if (err.code === 'EADDRINUSE') {
+        console.error(`\n\u274C  Port ${PORT} is already in use.`);
+        console.error(`    Another process is already listening on this port.`);
+        console.error(`\n    Most likely causes:`);
+        console.error(`      1. PM2 is already running this server`);
+        console.error(`         Stop it first:  pm2 stop silwane-erp-api`);
+        console.error(`         Then retry:     node server.js`);
+        console.error(`      2. A previous instance was not shut down cleanly`);
+        console.error(`         Find it:  netstat -ano | findstr :${PORT}`);
+        console.error(`         Kill it:  taskkill /PID <pid> /F`);
+        console.error(`      3. Another app is using port ${PORT}`);
+        console.error(`         Change PORT in your .env file and restart.\n`);
+        logger.error(`EADDRINUSE: port ${PORT} already in use - exiting`);
+        process.exit(1);
+      } else {
+        // Re-throw any other server-level errors
+        logger.error('Server error:', err);
+        throw err;
+      }
+    });
+
   } catch (error) {
     logger.error('Failed to start server:', error);
     process.exit(1);
   }
 };
 
-// Handle unhandled promise rejections
+// =====================================================
+// PROCESS SIGNAL HANDLERS
+// =====================================================
+
+const gracefulShutdown = (signal) => {
+  logger.info(`${signal} received, shutting down gracefully`);
+  if (server) {
+    server.close(() => {
+      logger.info('HTTP server closed');
+      pool.end(() => {
+        logger.info('Database pool closed');
+        process.exit(0);
+      });
+    });
+  } else {
+    pool.end(() => process.exit(0));
+  }
+};
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT',  () => gracefulShutdown('SIGINT'));   // Ctrl+C
+
 process.on('unhandledRejection', (err) => {
   logger.error('Unhandled Promise Rejection:', err);
   process.exit(1);
-});
-
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  logger.info('SIGTERM received, shutting down gracefully');
-  pool.end(() => {
-    logger.info('Database pool closed');
-    process.exit(0);
-  });
 });
 
 startServer();
