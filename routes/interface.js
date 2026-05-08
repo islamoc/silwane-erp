@@ -1,6 +1,13 @@
-// MC08 - User Interface Module (Dashboard, Search, Filters)
+// MC Interface / UI configuration routes (placeholder — routes to be implemented)
 
 const express = require('express');
 const router = express.Router();
-const { query: dbQuery } = require('../config/database');
-const { authenticate, authorizeRoles } = require('../middleware/auth');
+const { authenticate } = require('../middleware/auth');
+const interfaceController = require('../controllers/interfaceController');
+
+router.use(authenticate);
+
+// Placeholder health-check route
+router.get('/', interfaceController.getStatus);
+
+module.exports = router;
