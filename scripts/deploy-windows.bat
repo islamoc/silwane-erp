@@ -6,36 +6,23 @@ chcp 65001 >nul
 :: ============================================================
 ::  Silwane ERP - Windows Auto Deployment Script
 ::  Author : Mennouchi Islam Azeddine
-::  Version: 4.4
+::  Version: 4.5
 ::
-::  CHANGELOG v4.4
+::  CHANGELOG v4.5
 ::  -------------------------------------------------------
-::  BUG 1 (CRITICAL) - scripts\..\server.js path not resolved
-::    ROOT CAUSE: %~dp0 always ends with a backslash, so
-::    set APP_DIR=%~dp0.. produces the LITERAL string
-::    "C:\...\scripts\.." - CMD does NOT resolve ".." in
-::    variable assignment. PM2 then receives that literal
-::    string as the script path.
-::    FIX: Force resolution via FOR /F with %%~fA modifier
-::    which expands to the fully-canonicalized absolute path:
-::      FOR /F "delims=" %%A IN ("%~dp0..") DO SET APP_DIR=%%~fA
+::  BUG 5 - False [ERROR] on PM2 start even when online
+::    ROOT CAUSE: CMD batch files capture !errorlevel! from
+::    pm2 start as non-zero in certain environments even when
+::    the process launches fine and shows 'online' in the PM2
+::    table.  pm2 start returns 0 for 'command accepted', but
+::    a stray non-zero code from table rendering or shell
+::    piping can flip !errorlevel! before the if-block reads.
+::    FIX: Remove exit-code reliance on pm2 start/restart.
+::    Instead, wait 3 s then run 'pm2 jlist' (JSON output)
+::    and grep for the process name + "online" with findstr.
+::    Only report ERROR if the process is genuinely not online.
 ::
-::  BUG 2 - Wrong admin script name
-::    Was calling create-admin.js but the real file is
-::    create-admin-user.js. Fixed to call the correct file
-::    and fall back gracefully if neither exists.
-::
-::  BUG 3 - pm2 start without --cwd
-::    Even with an absolute script path, PM2 sets the working
-::    directory to whatever the shell's CWD is at call time.
-::    This breaks require('./config'), dotenv paths, etc.
-::    FIX: added --cwd "%APP_DIR%" to pm2 start so the app
-::    always resolves relative paths from the project root.
-::
-::  BUG 4 - No guard when server.js is missing
-::    Previous guard was AFTER the JWT/DB setup steps so the
-::    user would waste time entering credentials before seeing
-::    the error. Moved to Step 1 (prerequisites).
+::  Previous changelogs (v4.1-v4.4) preserved in Git history.
 ::
 ::  Steps:
 ::    1.  Prerequisite checks (Node, npm, Git, psql, server.js)
@@ -53,14 +40,6 @@ chcp 65001 >nul
 ::   13.  Full deployment summary + open browser
 :: ============================================================
 
-:: -------------------------------------------------------
-:: CRITICAL: Resolve APP_DIR to a TRUE absolute path.
-:: %~dp0 = "C:\Users\usuario\silwane-erp\scripts\"
-:: %~dp0.. = "C:\Users\usuario\silwane-erp\scripts\.."
-::   (CMD does NOT collapse the ".." in a SET statement)
-:: FOR /F with %%~fA forces filesystem resolution so we
-:: get "C:\Users\usuario\silwane-erp" with no trailing \
-:: -------------------------------------------------------
 FOR /F "delims=" %%A IN ("%~dp0..") DO SET "APP_DIR=%%~fA"
 
 set "FRONTEND_DIR=%APP_DIR%\frontend"
@@ -70,11 +49,6 @@ set "FE_ENV_FILE=%FRONTEND_DIR%\.env"
 set "SERVER_JS=%APP_DIR%\server.js"
 set "FRONTEND_BUILD=%FRONTEND_DIR%\build"
 
-:: -------------------------------------------------------
-:: Determine the correct admin-creation script name.
-:: The file on disk is create-admin-user.js
-:: (previous versions wrongly called create-admin.js)
-:: -------------------------------------------------------
 set "ADMIN_SCRIPT=%SCRIPTS_DIR%\create-admin-user.js"
 if not exist "%ADMIN_SCRIPT%" (
     if exist "%SCRIPTS_DIR%\create-admin.js" (
@@ -109,7 +83,7 @@ set "ADMIN_CREATED=0"
 
 echo.
 echo =====================================================
-echo   SILWANE ERP - Windows Auto Deployment v4.4
+echo   SILWANE ERP - Windows Auto Deployment v4.5
 echo =====================================================
 echo   Project root: %APP_DIR%
 echo =====================================================
@@ -145,20 +119,14 @@ if %errorlevel% equ 0 (
     for /f "tokens=*" %%v in ('psql --version 2^>nul') do echo     [OK] %%v
 ) else ( echo     [WARN] psql not in PATH - DB auto-creation skipped )
 
-:: Guard: verify server.js exists RIGHT NOW before wasting the user's time
 if not exist "%SERVER_JS%" (
     echo.
-    echo [ERROR] server.js not found.
-    echo         Expected location: %SERVER_JS%
-    echo.
+    echo [ERROR] server.js not found at: %SERVER_JS%
     echo         Possible causes:
-    echo           1. You moved the scripts\ folder outside the project root
-    echo           2. The project was cloned into a different directory
-    echo           3. server.js was accidentally deleted
-    echo.
+    echo           1. scripts\ folder moved outside project root
+    echo           2. Project cloned into a different directory
+    echo           3. server.js was deleted
     echo         Resolved APP_DIR = %APP_DIR%
-    echo         If this path looks wrong, run the script from inside
-    echo         the silwane-erp\scripts\ folder.
     echo.
     pause & exit /b 1
 )
@@ -449,12 +417,14 @@ if !errorlevel! equ 0 (
 :: ============================================================
 :: STEP 11 - Start backend with PM2
 ::
-::  KEY POINTS:
-::  - Pass fully resolved absolute path %SERVER_JS%
-::  - Pass --cwd "%APP_DIR%" so the app's own require()
-::    calls and dotenv.config() resolve from the project root
-::  - Use delayed expansion (!errorlevel!) inside the
-::    if/else blocks to read the ACTUAL exit code
+::  KEY FIX (v4.5):
+::  Do NOT rely on pm2 start/restart exit code.
+::  pm2 start outputs a table and may return a non-zero code
+::  from rendering even when the process is genuinely online.
+::  Instead: run start/restart unconditionally, wait 3 seconds
+::  for the process to stabilise, then verify with:
+::    pm2 jlist  (JSON output)  |  findstr "online"
+::  If the process name + "online" are both found, it is live.
 :: ============================================================
 :step11
 echo.
@@ -475,35 +445,41 @@ where pm2 >nul 2>&1
 if !errorlevel! equ 0 (
     set PM2_AVAILABLE=1
 
+    :: Check if silwane-erp-api process already exists in PM2
     pm2 describe silwane-erp-api >nul 2>&1
-    set PM2_API_EXISTS=!errorlevel!
-
-    if !PM2_API_EXISTS! equ 0 (
-        pm2 restart silwane-erp-api --update-env
-        if !errorlevel! equ 0 (
-            echo     [OK] Backend restarted with updated env  ^(silwane-erp-api^)
-        ) else (
-            echo     [WARN] Restart failed - deleting and re-starting...
-            pm2 delete silwane-erp-api >nul 2>&1
-            pm2 start "%SERVER_JS%" --name "silwane-erp-api" --cwd "%APP_DIR%" --env production
-            echo     [OK] Backend started fresh
-        )
+    if !errorlevel! equ 0 (
+        echo     Restarting existing PM2 process...
+        pm2 restart silwane-erp-api --update-env >nul 2>&1
     ) else (
         echo     Starting: %SERVER_JS%
-        pm2 start "%SERVER_JS%" --name "silwane-erp-api" --cwd "%APP_DIR%" --env production
-        if !errorlevel! equ 0 (
-            echo     [OK] Backend started  ^(silwane-erp-api^)  ->  http://localhost:%PORT%
-        ) else (
-            echo.
-            echo     [ERROR] PM2 could not start the backend.
-            echo             Script : %SERVER_JS%
-            echo             CWD    : %APP_DIR%
-            echo             Try running manually to see the real error:
-            echo               cd /d "%APP_DIR%"
-            echo               node server.js
-            echo.
-            pause & exit /b 1
-        )
+        pm2 start "%SERVER_JS%" --name "silwane-erp-api" --cwd "%APP_DIR%" --env production >nul 2>&1
+    )
+
+    :: -------------------------------------------------------
+    :: Wait for process to stabilise then verify via pm2 jlist
+    :: We grep JSON output for the process name and "online".
+    :: If both appear in the same output, the process is live.
+    :: -------------------------------------------------------
+    echo     Waiting for process to stabilise...
+    timeout /t 3 /nobreak >nul
+
+    set "API_ONLINE=0"
+    for /f "tokens=*" %%L in ('pm2 jlist 2^>nul ^| findstr /i "silwane-erp-api"') do (
+        echo %%L | findstr /i "online" >nul 2>&1
+        if !errorlevel! equ 0 set "API_ONLINE=1"
+    )
+
+    if "!API_ONLINE!"=="1" (
+        echo     [OK] Backend is online  ^(silwane-erp-api^)  ->  http://localhost:!PORT!
+    ) else (
+        echo.
+        echo     [ERROR] PM2 process is not online after start.
+        echo             Script : %SERVER_JS%
+        echo             CWD    : %APP_DIR%
+        echo             Check logs: pm2 logs silwane-erp-api
+        echo             Try manually: node server.js
+        echo.
+        pause & exit /b 1
     )
 
     pm2 save >nul 2>&1
@@ -536,25 +512,26 @@ if !errorlevel! equ 0 (
 
     if "%PM2_AVAILABLE%"=="1" (
         pm2 describe silwane-erp-ui >nul 2>&1
-        set PM2_UI_EXISTS=!errorlevel!
-
-        if !PM2_UI_EXISTS! equ 0 (
-            pm2 restart silwane-erp-ui --update-env
-            if !errorlevel! equ 0 (
-                echo     [OK] Frontend restarted  ^(silwane-erp-ui^)
-            ) else (
-                pm2 delete silwane-erp-ui >nul 2>&1
-                pm2 start "serve" --name "silwane-erp-ui" -- -s "%FRONTEND_BUILD%" -l %FE_PORT%
-                echo     [OK] Frontend started fresh  ^(silwane-erp-ui^)
-            )
+        if !errorlevel! equ 0 (
+            pm2 restart silwane-erp-ui --update-env >nul 2>&1
         ) else (
-            pm2 start "serve" --name "silwane-erp-ui" -- -s "%FRONTEND_BUILD%" -l %FE_PORT%
-            if !errorlevel! equ 0 (
-                echo     [OK] Frontend started  ^(silwane-erp-ui^)  ->  http://localhost:%FE_PORT%
-            ) else (
-                echo     [ERROR] Could not start frontend via PM2
-                echo             Manual: npx serve -s "%FRONTEND_BUILD%" -l %FE_PORT%
-            )
+            pm2 start "serve" --name "silwane-erp-ui" -- -s "%FRONTEND_BUILD%" -l %FE_PORT% >nul 2>&1
+        )
+
+        :: Verify UI process is online
+        timeout /t 3 /nobreak >nul
+        set "UI_ONLINE=0"
+        for /f "tokens=*" %%L in ('pm2 jlist 2^>nul ^| findstr /i "silwane-erp-ui"') do (
+            echo %%L | findstr /i "online" >nul 2>&1
+            if !errorlevel! equ 0 set "UI_ONLINE=1"
+        )
+
+        if "!UI_ONLINE!"=="1" (
+            echo     [OK] Frontend is online  ^(silwane-erp-ui^)  ->  http://localhost:!FE_PORT!
+            set FE_RUNNING=1
+        ) else (
+            echo     [WARN] Frontend PM2 process did not come online.
+            echo             Manual: npx serve -s "%FRONTEND_BUILD%" -l %FE_PORT%
         )
 
         pm2 save >nul 2>&1
@@ -563,16 +540,13 @@ if !errorlevel! equ 0 (
     ) else (
         start "Silwane ERP UI" cmd /k "serve -s "%FRONTEND_BUILD%" -l %FE_PORT%"
         echo     [OK] Frontend serving in new window  ->  http://localhost:%FE_PORT%
+        set FE_RUNNING=1
     )
-
-    set FE_RUNNING=1
 
 ) else (
     echo     [WARN] 'serve' could not be installed.
     echo           Serve manually: npx serve -s "%FRONTEND_BUILD%" -l %FE_PORT%
 )
-
-timeout /t 3 /nobreak >nul
 
 :: ============================================================
 :: DEPLOYMENT SUMMARY
@@ -581,7 +555,7 @@ timeout /t 3 /nobreak >nul
 echo.
 echo.
 echo =====================================================
-echo   DEPLOYMENT COMPLETE - FULL SUMMARY  v4.4
+echo   DEPLOYMENT COMPLETE - FULL SUMMARY  v4.5
 echo =====================================================
 echo.
 echo   PROJECT ROOT
