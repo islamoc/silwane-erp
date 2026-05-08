@@ -6,7 +6,7 @@ chcp 65001 >nul
 :: ============================================================
 ::  Silwane ERP - Windows Auto Deployment Script
 ::  Author : Mennouchi Islam Azeddine
-::  Version: 4.2
+::  Version: 4.3
 ::
 ::  Steps:
 ::    1.  Prerequisite checks (Node, npm, Git, psql)
@@ -19,8 +19,8 @@ chcp 65001 >nul
 ::    8.  Install frontend dependencies
 ::    9.  Build frontend (React production build)
 ::   10.  Create initial admin account
-::   11.  Start backend  with PM2 (silwane-erp-api)  [FIXED]
-::   12.  Start frontend with PM2 + serve (silwane-erp-ui) [FIXED]
+::   11.  Start backend  with PM2 (silwane-erp-api)  [FIXED v4.3]
+::   12.  Start frontend with PM2 + serve (silwane-erp-ui)
 ::   13.  Full deployment summary + open browser
 :: ============================================================
 
@@ -29,6 +29,11 @@ set "FRONTEND_DIR=%APP_DIR%\frontend"
 set "SCRIPTS_DIR=%APP_DIR%\scripts"
 set "ENV_FILE=%APP_DIR%\.env"
 set "FE_ENV_FILE=%FRONTEND_DIR%\.env"
+
+:: Absolute path to server entry point - avoids PM2 resolving
+:: it relative to whatever the current directory happens to be
+set "SERVER_JS=%APP_DIR%\server.js"
+set "FRONTEND_BUILD=%FRONTEND_DIR%\build"
 
 :: Defaults
 set "PORT=5000"
@@ -55,7 +60,7 @@ set "ADMIN_CREATED=0"
 
 echo.
 echo =====================================================
-echo   SILWANE ERP - Windows Auto Deployment v4.2
+echo   SILWANE ERP - Windows Auto Deployment v4.3
 echo =====================================================
 echo.
 
@@ -88,6 +93,18 @@ if %errorlevel% equ 0 (
     set PSQL_AVAILABLE=1
     for /f "tokens=*" %%v in ('psql --version 2^>nul') do echo     [OK] %%v
 ) else ( echo     [WARN] psql not in PATH - DB auto-creation skipped )
+
+:: Verify server.js exists before going further
+if not exist "%SERVER_JS%" (
+    echo.
+    echo [ERROR] server.js not found at: %SERVER_JS%
+    echo         Make sure you are running this script from inside the
+    echo         silwane-erp\scripts\ folder, and that server.js exists
+    echo         in the project root.
+    echo.
+    pause & exit /b 1
+)
+echo     [OK] server.js found at %SERVER_JS%
 
 :: ============================================================
 :: STEP 2 - Git pull
@@ -362,20 +379,25 @@ if %errorlevel% equ 0 (
 )
 
 :: ============================================================
-:: STEP 11 - Start backend with PM2  [FIXED]
+:: STEP 11 - Start backend with PM2
 ::
-::  ROOT CAUSE of "[PM2][ERROR] Process not found" + wrong message:
-::    The old code used %errorlevel% inside an if/else block.
-::    In CMD batch, %var% is expanded at PARSE TIME for the whole
-::    block, so both branches read the same stale value.
-::    Fix: use !errorlevel! (delayed expansion) so the value is
-::    read AFTER pm2 describe actually runs.
+::  FIX v4.3: The previous error was:
+::    [PM2][ERROR] Script not found: C:\...\scripts\server.js
 ::
-::  Also added --update-env to restart so .env changes are picked
-::  up without needing to delete the PM2 process first.
+::  Root cause: PM2 resolves relative paths against the CURRENT
+::  WORKING DIRECTORY at the time pm2 start is called, not the
+::  script's location. After create-admin.js the CWD was APP_DIR
+::  but Windows was still tracking %APP_DIR% as scripts\..\, so
+::  PM2 ended up looking inside the scripts\ folder for server.js.
+::
+::  Fix: Always pass the fully-resolved absolute path %SERVER_JS%
+::  (set at the top of the script as %APP_DIR%\server.js) so PM2
+::  never has to resolve anything relative.
 :: ============================================================
 echo.
 echo [11/12] Starting backend with PM2...
+
+:: Always cd to APP_DIR before PM2 commands so logs land there
 cd /d "%APP_DIR%"
 
 where pm2 >nul 2>&1
@@ -393,30 +415,33 @@ where pm2 >nul 2>&1
 if !errorlevel! equ 0 (
     set PM2_AVAILABLE=1
 
-    :: Check if the process already exists
     pm2 describe silwane-erp-api >nul 2>&1
     set PM2_API_EXISTS=!errorlevel!
 
     if !PM2_API_EXISTS! equ 0 (
-        :: Process exists - restart it and reload env vars
+        :: Process exists - restart and reload .env
         pm2 restart silwane-erp-api --update-env
         if !errorlevel! equ 0 (
             echo     [OK] Backend restarted with updated env  ^(silwane-erp-api^)
         ) else (
-            echo     [WARN] Restart failed - trying delete + start...
+            echo     [WARN] Restart failed - deleting and re-starting...
             pm2 delete silwane-erp-api >nul 2>&1
-            pm2 start server.js --name "silwane-erp-api" --env production
+            pm2 start "%SERVER_JS%" --name "silwane-erp-api" --env production
             echo     [OK] Backend started fresh  ^(silwane-erp-api^)
         )
     ) else (
-        :: Process does not exist - start it fresh
-        pm2 start server.js --name "silwane-erp-api" --env production
+        :: Process does not exist - start fresh using absolute path
+        echo     Starting silwane-erp-api from: %SERVER_JS%
+        pm2 start "%SERVER_JS%" --name "silwane-erp-api" --env production
         if !errorlevel! equ 0 (
             echo     [OK] Backend started  ^(silwane-erp-api^)  ->  http://localhost:%PORT%
         ) else (
-            echo     [ERROR] PM2 could not start server.js
-            echo             Check that server.js exists in: %APP_DIR%
-            echo             Run manually: node server.js
+            echo.
+            echo     [ERROR] PM2 could not start the backend.
+            echo             Script path used: %SERVER_JS%
+            echo             Verify that file exists, then run manually:
+            echo               node "%SERVER_JS%"
+            echo.
             pause & exit /b 1
         )
     )
@@ -425,13 +450,11 @@ if !errorlevel! equ 0 (
 
 ) else (
     echo     [WARN] PM2 still unavailable - starting backend in new CMD window
-    start "Silwane ERP API" cmd /k "cd /d "%APP_DIR%" && node server.js"
+    start "Silwane ERP API" cmd /k "node "%SERVER_JS%""
 )
 
 :: ============================================================
-:: STEP 12 - Serve frontend with PM2 + 'serve'  [FIXED]
-::
-::  Same delayed expansion fix applied here for pm2 describe check.
+:: STEP 12 - Serve frontend with PM2 + 'serve'
 :: ============================================================
 echo.
 echo [12/12] Starting frontend...
@@ -461,16 +484,16 @@ if !errorlevel! equ 0 (
                 echo     [OK] Frontend restarted  ^(silwane-erp-ui^)
             ) else (
                 pm2 delete silwane-erp-ui >nul 2>&1
-                pm2 start "serve" --name "silwane-erp-ui" -- -s "%FRONTEND_DIR%\build" -l %FE_PORT%
+                pm2 start "serve" --name "silwane-erp-ui" -- -s "%FRONTEND_BUILD%" -l %FE_PORT%
                 echo     [OK] Frontend started fresh  ^(silwane-erp-ui^)
             )
         ) else (
-            pm2 start "serve" --name "silwane-erp-ui" -- -s "%FRONTEND_DIR%\build" -l %FE_PORT%
+            pm2 start "serve" --name "silwane-erp-ui" -- -s "%FRONTEND_BUILD%" -l %FE_PORT%
             if !errorlevel! equ 0 (
                 echo     [OK] Frontend started  ^(silwane-erp-ui^)  ->  http://localhost:%FE_PORT%
             ) else (
                 echo     [ERROR] Could not start frontend via PM2
-                echo             Run manually: npx serve -s frontend\build -l %FE_PORT%
+                echo             Run manually: npx serve -s "%FRONTEND_BUILD%" -l %FE_PORT%
             )
         )
 
@@ -478,7 +501,7 @@ if !errorlevel! equ 0 (
         echo     [OK] PM2 process list saved ^(auto-restart on reboot^)
 
     ) else (
-        start "Silwane ERP UI" cmd /k "serve -s "%FRONTEND_DIR%\build" -l %FE_PORT%"
+        start "Silwane ERP UI" cmd /k "serve -s "%FRONTEND_BUILD%" -l %FE_PORT%"
         echo     [OK] Frontend serving in new window  ->  http://localhost:%FE_PORT%
     )
 
@@ -486,7 +509,7 @@ if !errorlevel! equ 0 (
 
 ) else (
     echo     [WARN] 'serve' could not be installed.
-    echo           Serve manually: npx serve -s frontend\build -l %FE_PORT%
+    echo           Serve manually: npx serve -s "%FRONTEND_BUILD%" -l %FE_PORT%
 )
 
 timeout /t 3 /nobreak >nul
@@ -504,20 +527,20 @@ echo.
 echo   BACKEND
 echo   -------
 echo   Process : silwane-erp-api  ^(PM2^)
+echo   Script  : %SERVER_JS%
 echo   URL     : http://localhost:%PORT%
-echo   Entry   : server.js
 echo.
 echo   FRONTEND  ^(React 18 + MUI + Recharts^)
 echo   ----------------------------------
 if "%FE_BUILT%"=="1" (
-    echo   Build   : frontend\build\  [READY]
+    echo   Build   : %FRONTEND_BUILD%  [READY]
     if "%FE_RUNNING%"=="1" (
         echo   Process : silwane-erp-ui  ^(PM2 + serve^)
         echo   URL     : http://localhost:%FE_PORT%
         echo   Proxy   : -^> http://localhost:%PORT%  ^(API^)
     ) else (
         echo   Process : NOT STARTED
-        echo   Manual  : npx serve -s frontend\build -l %FE_PORT%
+        echo   Manual  : npx serve -s "%FRONTEND_BUILD%" -l %FE_PORT%
     )
 ) else (
     echo   Build   : FAILED or SKIPPED
