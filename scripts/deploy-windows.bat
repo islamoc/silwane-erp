@@ -6,23 +6,24 @@ chcp 65001 >nul
 :: ============================================================
 ::  Silwane ERP - Windows Auto Deployment Script
 ::  Author : Mennouchi Islam Azeddine
-::  Version: 4.5
+::  Version: 4.6
 ::
-::  CHANGELOG v4.5
+::  CHANGELOG v4.6
 ::  -------------------------------------------------------
-::  BUG 5 - False [ERROR] on PM2 start even when online
-::    ROOT CAUSE: CMD batch files capture !errorlevel! from
-::    pm2 start as non-zero in certain environments even when
-::    the process launches fine and shows 'online' in the PM2
-::    table.  pm2 start returns 0 for 'command accepted', but
-::    a stray non-zero code from table rendering or shell
-::    piping can flip !errorlevel! before the if-block reads.
-::    FIX: Remove exit-code reliance on pm2 start/restart.
-::    Instead, wait 3 s then run 'pm2 jlist' (JSON output)
-::    and grep for the process name + "online" with findstr.
-::    Only report ERROR if the process is genuinely not online.
+::  BUG 6 - Script broken when run from Git Bash (MINGW64)
+::    ROOT CAUSE 1: timeout /t /nobreak is intercepted by
+::    Git Bash's Linux 'timeout' which rejects /t flag.
+::    FIX: All waits replaced with cross-shell Node.js:
+::      node -e "setTimeout(function(){},3000);"
 ::
-::  Previous changelogs (v4.1-v4.4) preserved in Git history.
+::    ROOT CAUSE 2: CMD 'for /f' backtick pipe expansion
+::    (pm2 jlist | findstr) does not execute in Git Bash -
+::    it echoes the JSON as a literal string, findstr never
+::    runs, API_ONLINE stays 0 -> false [ERROR] every time.
+::    FIX: PM2 status check replaced with a Node.js
+::    one-liner that parses pm2 jlist JSON directly and
+::    exits 0 (online) or 1 (not online). Works in cmd.exe,
+::    PowerShell, and Git Bash identically.
 ::
 ::  Steps:
 ::    1.  Prerequisite checks (Node, npm, Git, psql, server.js)
@@ -83,7 +84,7 @@ set "ADMIN_CREATED=0"
 
 echo.
 echo =====================================================
-echo   SILWANE ERP - Windows Auto Deployment v4.5
+echo   SILWANE ERP - Windows Auto Deployment v4.6
 echo =====================================================
 echo   Project root: %APP_DIR%
 echo =====================================================
@@ -417,14 +418,19 @@ if !errorlevel! equ 0 (
 :: ============================================================
 :: STEP 11 - Start backend with PM2
 ::
-::  KEY FIX (v4.5):
-::  Do NOT rely on pm2 start/restart exit code.
-::  pm2 start outputs a table and may return a non-zero code
-::  from rendering even when the process is genuinely online.
-::  Instead: run start/restart unconditionally, wait 3 seconds
-::  for the process to stabilise, then verify with:
-::    pm2 jlist  (JSON output)  |  findstr "online"
-::  If the process name + "online" are both found, it is live.
+::  KEY FIX (v4.6):
+::  Two cross-shell compatibility fixes for Git Bash (MINGW64):
+::
+::  1. WAIT: Use Node.js setTimeout instead of timeout /t
+::     node -e "setTimeout(function(){},3000);"
+::     Works in cmd.exe, PowerShell, and Git Bash.
+::
+::  2. STATUS CHECK: Use Node.js to parse pm2 jlist JSON
+::     instead of cmd for/f + findstr pipeline which does
+::     not work in Git Bash (echoes JSON as literal string).
+::     Node script: run pm2 jlist, parse JSON, find process
+::     by name, check status === 'online', exit 0 or 1.
+::     Script reads !errorlevel! from the node call normally.
 :: ============================================================
 :step11
 echo.
@@ -445,7 +451,6 @@ where pm2 >nul 2>&1
 if !errorlevel! equ 0 (
     set PM2_AVAILABLE=1
 
-    :: Check if silwane-erp-api process already exists in PM2
     pm2 describe silwane-erp-api >nul 2>&1
     if !errorlevel! equ 0 (
         echo     Restarting existing PM2 process...
@@ -456,17 +461,22 @@ if !errorlevel! equ 0 (
     )
 
     :: -------------------------------------------------------
-    :: Wait for process to stabilise then verify via pm2 jlist
-    :: We grep JSON output for the process name and "online".
-    :: If both appear in the same output, the process is live.
+    :: Cross-shell wait: node setTimeout works in cmd + Git Bash
     :: -------------------------------------------------------
     echo     Waiting for process to stabilise...
-    timeout /t 3 /nobreak >nul
+    node -e "setTimeout(function(){},3000);"
 
-    set "API_ONLINE=0"
-    for /f "tokens=*" %%L in ('pm2 jlist 2^>nul ^| findstr /i "silwane-erp-api"') do (
-        echo %%L | findstr /i "online" >nul 2>&1
-        if !errorlevel! equ 0 set "API_ONLINE=1"
+    :: -------------------------------------------------------
+    :: Cross-shell PM2 status check via Node.js JSON parsing.
+    :: Runs pm2 jlist, parses JSON, finds 'silwane-erp-api',
+    :: checks status === 'online'. Exits 0 = online, 1 = not.
+    :: Works identically in cmd.exe, PowerShell, Git Bash.
+    :: -------------------------------------------------------
+    node -e "var e=require('child_process').execSync('pm2 jlist',{encoding:'utf8'});var l=JSON.parse(e);var p=l.find(function(x){return x.name==='silwane-erp-api';});process.exit(p&&p.pm2_env&&p.pm2_env.status==='online'?0:1);"
+    if !errorlevel! equ 0 (
+        set "API_ONLINE=1"
+    ) else (
+        set "API_ONLINE=0"
     )
 
     if "!API_ONLINE!"=="1" (
@@ -518,15 +528,12 @@ if !errorlevel! equ 0 (
             pm2 start "serve" --name "silwane-erp-ui" -- -s "%FRONTEND_BUILD%" -l %FE_PORT% >nul 2>&1
         )
 
-        :: Verify UI process is online
-        timeout /t 3 /nobreak >nul
-        set "UI_ONLINE=0"
-        for /f "tokens=*" %%L in ('pm2 jlist 2^>nul ^| findstr /i "silwane-erp-ui"') do (
-            echo %%L | findstr /i "online" >nul 2>&1
-            if !errorlevel! equ 0 set "UI_ONLINE=1"
-        )
+        :: Cross-shell wait
+        node -e "setTimeout(function(){},3000);"
 
-        if "!UI_ONLINE!"=="1" (
+        :: Cross-shell PM2 status check for UI process
+        node -e "var e=require('child_process').execSync('pm2 jlist',{encoding:'utf8'});var l=JSON.parse(e);var p=l.find(function(x){return x.name==='silwane-erp-ui';});process.exit(p&&p.pm2_env&&p.pm2_env.status==='online'?0:1);"
+        if !errorlevel! equ 0 (
             echo     [OK] Frontend is online  ^(silwane-erp-ui^)  ->  http://localhost:!FE_PORT!
             set FE_RUNNING=1
         ) else (
@@ -555,7 +562,7 @@ if !errorlevel! equ 0 (
 echo.
 echo.
 echo =====================================================
-echo   DEPLOYMENT COMPLETE - FULL SUMMARY  v4.5
+echo   DEPLOYMENT COMPLETE - FULL SUMMARY  v4.6
 echo =====================================================
 echo.
 echo   PROJECT ROOT
@@ -632,7 +639,7 @@ echo.
 
 if "%FE_RUNNING%"=="1" (
     echo Opening app in browser...
-    timeout /t 2 /nobreak >nul
+    node -e "setTimeout(function(){},2000);"
     start http://localhost:%FE_PORT%
 ) else (
     start http://localhost:%PORT%
