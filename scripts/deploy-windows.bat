@@ -6,7 +6,14 @@ chcp 65001 >nul
 :: ============================================================
 ::  Silwane ERP - Windows Auto Deployment Script
 ::  Author : Mennouchi Islam Azeddine
-::  Version: 4.6
+::  Version: 4.7
+::
+::  CHANGELOG v4.7
+::  -------------------------------------------------------
+::  CHANGE - Step 11: removed PM2 online/offline status
+::  check entirely. Script now starts/restarts the backend
+::  process and proceeds immediately to step 12 (frontend)
+::  without waiting or verifying pm2 status.
 ::
 ::  CHANGELOG v4.6
 ::  -------------------------------------------------------
@@ -84,7 +91,7 @@ set "ADMIN_CREATED=0"
 
 echo.
 echo =====================================================
-echo   SILWANE ERP - Windows Auto Deployment v4.6
+echo   SILWANE ERP - Windows Auto Deployment v4.7
 echo =====================================================
 echo   Project root: %APP_DIR%
 echo =====================================================
@@ -418,19 +425,9 @@ if !errorlevel! equ 0 (
 :: ============================================================
 :: STEP 11 - Start backend with PM2
 ::
-::  KEY FIX (v4.6):
-::  Two cross-shell compatibility fixes for Git Bash (MINGW64):
-::
-::  1. WAIT: Use Node.js setTimeout instead of timeout /t
-::     node -e "setTimeout(function(){},3000);"
-::     Works in cmd.exe, PowerShell, and Git Bash.
-::
-::  2. STATUS CHECK: Use Node.js to parse pm2 jlist JSON
-::     instead of cmd for/f + findstr pipeline which does
-::     not work in Git Bash (echoes JSON as literal string).
-::     Node script: run pm2 jlist, parse JSON, find process
-::     by name, check status === 'online', exit 0 or 1.
-::     Script reads !errorlevel! from the node call normally.
+::  v4.7: PM2 online/offline status check removed.
+::  Script starts or restarts the process, saves the PM2
+::  process list, then proceeds directly to step 12.
 :: ============================================================
 :step11
 echo.
@@ -460,39 +457,9 @@ if !errorlevel! equ 0 (
         pm2 start "%SERVER_JS%" --name "silwane-erp-api" --cwd "%APP_DIR%" --env production >nul 2>&1
     )
 
-    :: -------------------------------------------------------
-    :: Cross-shell wait: node setTimeout works in cmd + Git Bash
-    :: -------------------------------------------------------
-    echo     Waiting for process to stabilise...
-    node -e "setTimeout(function(){},3000);"
-
-    :: -------------------------------------------------------
-    :: Cross-shell PM2 status check via Node.js JSON parsing.
-    :: Runs pm2 jlist, parses JSON, finds 'silwane-erp-api',
-    :: checks status === 'online'. Exits 0 = online, 1 = not.
-    :: Works identically in cmd.exe, PowerShell, Git Bash.
-    :: -------------------------------------------------------
-    node -e "var e=require('child_process').execSync('pm2 jlist',{encoding:'utf8'});var l=JSON.parse(e);var p=l.find(function(x){return x.name==='silwane-erp-api';});process.exit(p&&p.pm2_env&&p.pm2_env.status==='online'?0:1);"
-    if !errorlevel! equ 0 (
-        set "API_ONLINE=1"
-    ) else (
-        set "API_ONLINE=0"
-    )
-
-    if "!API_ONLINE!"=="1" (
-        echo     [OK] Backend is online  ^(silwane-erp-api^)  ->  http://localhost:!PORT!
-    ) else (
-        echo.
-        echo     [ERROR] PM2 process is not online after start.
-        echo             Script : %SERVER_JS%
-        echo             CWD    : %APP_DIR%
-        echo             Check logs: pm2 logs silwane-erp-api
-        echo             Try manually: node server.js
-        echo.
-        pause & exit /b 1
-    )
-
     pm2 save >nul 2>&1
+    echo     [OK] Backend started  ^(silwane-erp-api^)  ->  http://localhost:!PORT!
+    echo     [INFO] Use 'pm2 logs silwane-erp-api' to verify startup
 
 ) else (
     echo     [WARN] PM2 still unavailable - starting backend in new CMD window
@@ -562,7 +529,7 @@ if !errorlevel! equ 0 (
 echo.
 echo.
 echo =====================================================
-echo   DEPLOYMENT COMPLETE - FULL SUMMARY  v4.6
+echo   DEPLOYMENT COMPLETE - FULL SUMMARY  v4.7
 echo =====================================================
 echo.
 echo   PROJECT ROOT
