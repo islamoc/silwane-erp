@@ -1,4 +1,5 @@
-// Analytics Routes - MC Dashboard
+// Analytics Routes
+// Wired strictly to functions exported by controllers/analyticsController.js
 
 const express = require('express');
 const router = express.Router();
@@ -8,22 +9,14 @@ const analyticsController = require('../controllers/analyticsController');
 // All analytics routes require authentication
 router.use(authenticate);
 
-// Dashboard KPIs
-router.get('/kpis', analyticsController.getKPIs);
+// G31 - Product analytics sheet
+router.get('/products/:id',        analyticsController.getProductAnalytics);
+router.get('/products/:id/export', analyticsController.exportProductAnalytics);
 
-// Revenue trends
-router.get('/revenue', analyticsController.getRevenueTrends);
+// G33 - Customer analytics sheet
+router.get('/customers/:id',       analyticsController.getCustomerAnalytics);
 
-// Top products
-router.get('/top-products', analyticsController.getTopProducts);
-
-// Top customers
-router.get('/top-customers', analyticsController.getTopCustomers);
-
-// Stock alerts
-router.get('/stock-alerts', analyticsController.getStockAlerts);
-
-// Recent activity
-router.get('/recent-activity', analyticsController.getRecentActivity);
+// G33 - Supplier analytics sheet
+router.get('/suppliers/:id',       analyticsController.getSupplierAnalytics);
 
 module.exports = router;
