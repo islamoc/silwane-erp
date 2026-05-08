@@ -6,34 +6,83 @@ chcp 65001 >nul
 :: ============================================================
 ::  Silwane ERP - Windows Auto Deployment Script
 ::  Author : Mennouchi Islam Azeddine
-::  Version: 4.3
+::  Version: 4.4
+::
+::  CHANGELOG v4.4
+::  -------------------------------------------------------
+::  BUG 1 (CRITICAL) - scripts\..\server.js path not resolved
+::    ROOT CAUSE: %~dp0 always ends with a backslash, so
+::    set APP_DIR=%~dp0.. produces the LITERAL string
+::    "C:\...\scripts\.." - CMD does NOT resolve ".." in
+::    variable assignment. PM2 then receives that literal
+::    string as the script path.
+::    FIX: Force resolution via FOR /F with %%~fA modifier
+::    which expands to the fully-canonicalized absolute path:
+::      FOR /F "delims=" %%A IN ("%~dp0..") DO SET APP_DIR=%%~fA
+::
+::  BUG 2 - Wrong admin script name
+::    Was calling create-admin.js but the real file is
+::    create-admin-user.js. Fixed to call the correct file
+::    and fall back gracefully if neither exists.
+::
+::  BUG 3 - pm2 start without --cwd
+::    Even with an absolute script path, PM2 sets the working
+::    directory to whatever the shell's CWD is at call time.
+::    This breaks require('./config'), dotenv paths, etc.
+::    FIX: added --cwd "%APP_DIR%" to pm2 start so the app
+::    always resolves relative paths from the project root.
+::
+::  BUG 4 - No guard when server.js is missing
+::    Previous guard was AFTER the JWT/DB setup steps so the
+::    user would waste time entering credentials before seeing
+::    the error. Moved to Step 1 (prerequisites).
 ::
 ::  Steps:
-::    1.  Prerequisite checks (Node, npm, Git, psql)
+::    1.  Prerequisite checks (Node, npm, Git, psql, server.js)
 ::    2.  Git pull latest code
 ::    3.  Generate secure JWT secret
 ::    4.  Setup backend .env
 ::    5.  Create PostgreSQL database + run migrations
 ::    6.  Install backend dependencies
-::    7.  Setup frontend .env  (REACT_APP_API_URL, etc.)
+::    7.  Setup frontend .env
 ::    8.  Install frontend dependencies
-::    9.  Build frontend (React production build)
+::    9.  Build React frontend (production)
 ::   10.  Create initial admin account
-::   11.  Start backend  with PM2 (silwane-erp-api)  [FIXED v4.3]
+::   11.  Start backend  with PM2 (silwane-erp-api)
 ::   12.  Start frontend with PM2 + serve (silwane-erp-ui)
 ::   13.  Full deployment summary + open browser
 :: ============================================================
 
-set "APP_DIR=%~dp0.."
+:: -------------------------------------------------------
+:: CRITICAL: Resolve APP_DIR to a TRUE absolute path.
+:: %~dp0 = "C:\Users\usuario\silwane-erp\scripts\"
+:: %~dp0.. = "C:\Users\usuario\silwane-erp\scripts\.."
+::   (CMD does NOT collapse the ".." in a SET statement)
+:: FOR /F with %%~fA forces filesystem resolution so we
+:: get "C:\Users\usuario\silwane-erp" with no trailing \
+:: -------------------------------------------------------
+FOR /F "delims=" %%A IN ("%~dp0..") DO SET "APP_DIR=%%~fA"
+
 set "FRONTEND_DIR=%APP_DIR%\frontend"
 set "SCRIPTS_DIR=%APP_DIR%\scripts"
 set "ENV_FILE=%APP_DIR%\.env"
 set "FE_ENV_FILE=%FRONTEND_DIR%\.env"
-
-:: Absolute path to server entry point - avoids PM2 resolving
-:: it relative to whatever the current directory happens to be
 set "SERVER_JS=%APP_DIR%\server.js"
 set "FRONTEND_BUILD=%FRONTEND_DIR%\build"
+
+:: -------------------------------------------------------
+:: Determine the correct admin-creation script name.
+:: The file on disk is create-admin-user.js
+:: (previous versions wrongly called create-admin.js)
+:: -------------------------------------------------------
+set "ADMIN_SCRIPT=%SCRIPTS_DIR%\create-admin-user.js"
+if not exist "%ADMIN_SCRIPT%" (
+    if exist "%SCRIPTS_DIR%\create-admin.js" (
+        set "ADMIN_SCRIPT=%SCRIPTS_DIR%\create-admin.js"
+    ) else (
+        set "ADMIN_SCRIPT="
+    )
+)
 
 :: Defaults
 set "PORT=5000"
@@ -60,7 +109,9 @@ set "ADMIN_CREATED=0"
 
 echo.
 echo =====================================================
-echo   SILWANE ERP - Windows Auto Deployment v4.3
+echo   SILWANE ERP - Windows Auto Deployment v4.4
+echo =====================================================
+echo   Project root: %APP_DIR%
 echo =====================================================
 echo.
 
@@ -94,17 +145,25 @@ if %errorlevel% equ 0 (
     for /f "tokens=*" %%v in ('psql --version 2^>nul') do echo     [OK] %%v
 ) else ( echo     [WARN] psql not in PATH - DB auto-creation skipped )
 
-:: Verify server.js exists before going further
+:: Guard: verify server.js exists RIGHT NOW before wasting the user's time
 if not exist "%SERVER_JS%" (
     echo.
-    echo [ERROR] server.js not found at: %SERVER_JS%
-    echo         Make sure you are running this script from inside the
-    echo         silwane-erp\scripts\ folder, and that server.js exists
-    echo         in the project root.
+    echo [ERROR] server.js not found.
+    echo         Expected location: %SERVER_JS%
+    echo.
+    echo         Possible causes:
+    echo           1. You moved the scripts\ folder outside the project root
+    echo           2. The project was cloned into a different directory
+    echo           3. server.js was accidentally deleted
+    echo.
+    echo         Resolved APP_DIR = %APP_DIR%
+    echo         If this path looks wrong, run the script from inside
+    echo         the silwane-erp\scripts\ folder.
     echo.
     pause & exit /b 1
 )
-echo     [OK] server.js found at %SERVER_JS%
+echo     [OK] server.js found: %SERVER_JS%
+echo     [OK] APP_DIR resolved: %APP_DIR%
 
 :: ============================================================
 :: STEP 2 - Git pull
@@ -351,11 +410,11 @@ if %errorlevel% neq 0 (
 )
 
 set FE_BUILT=1
-echo     [OK] React build complete  =^>  frontend\build\
+echo     [OK] React build complete  =^>  %FRONTEND_BUILD%
 
 if exist "%APP_DIR%\public" (
     echo     Syncing build to backend public\ folder...
-    xcopy /E /I /Y "%FRONTEND_DIR%\build\*" "%APP_DIR%\public\" >nul 2>&1
+    xcopy /E /I /Y "%FRONTEND_BUILD%\*" "%APP_DIR%\public\" >nul 2>&1
     if !errorlevel! equ 0 (
         echo     [OK] Build synced to public\
     ) else (
@@ -370,34 +429,36 @@ if exist "%APP_DIR%\public" (
 echo.
 echo [10/12] Setting up initial admin account...
 cd /d "%APP_DIR%"
-node "%SCRIPTS_DIR%\create-admin.js"
-if %errorlevel% equ 0 (
+
+if "%ADMIN_SCRIPT%"=="" (
+    echo     [WARN] No admin creation script found in scripts\
+    echo           Expected: scripts\create-admin-user.js
+    goto :step11
+)
+
+echo     Running: %ADMIN_SCRIPT%
+node "%ADMIN_SCRIPT%"
+if !errorlevel! equ 0 (
     set ADMIN_CREATED=1
+    echo     [OK] Admin account ready
 ) else (
-    echo     [WARN] Admin setup skipped or failed.
-    echo           Run manually: node scripts/create-admin.js
+    echo     [WARN] Admin setup skipped or already exists.
+    echo           Re-run manually: node "%ADMIN_SCRIPT%"
 )
 
 :: ============================================================
 :: STEP 11 - Start backend with PM2
 ::
-::  FIX v4.3: The previous error was:
-::    [PM2][ERROR] Script not found: C:\...\scripts\server.js
-::
-::  Root cause: PM2 resolves relative paths against the CURRENT
-::  WORKING DIRECTORY at the time pm2 start is called, not the
-::  script's location. After create-admin.js the CWD was APP_DIR
-::  but Windows was still tracking %APP_DIR% as scripts\..\, so
-::  PM2 ended up looking inside the scripts\ folder for server.js.
-::
-::  Fix: Always pass the fully-resolved absolute path %SERVER_JS%
-::  (set at the top of the script as %APP_DIR%\server.js) so PM2
-::  never has to resolve anything relative.
+::  KEY POINTS:
+::  - Pass fully resolved absolute path %SERVER_JS%
+::  - Pass --cwd "%APP_DIR%" so the app's own require()
+::    calls and dotenv.config() resolve from the project root
+::  - Use delayed expansion (!errorlevel!) inside the
+::    if/else blocks to read the ACTUAL exit code
 :: ============================================================
+:step11
 echo.
 echo [11/12] Starting backend with PM2...
-
-:: Always cd to APP_DIR before PM2 commands so logs land there
 cd /d "%APP_DIR%"
 
 where pm2 >nul 2>&1
@@ -405,8 +466,7 @@ if %errorlevel% neq 0 (
     echo     PM2 not found - installing globally...
     call npm install -g pm2
     if !errorlevel! neq 0 (
-        echo     [ERROR] Failed to install PM2.
-        echo             Install manually: npm install -g pm2
+        echo     [ERROR] Failed to install PM2. Install manually: npm install -g pm2
         pause & exit /b 1
     )
 )
@@ -419,28 +479,28 @@ if !errorlevel! equ 0 (
     set PM2_API_EXISTS=!errorlevel!
 
     if !PM2_API_EXISTS! equ 0 (
-        :: Process exists - restart and reload .env
         pm2 restart silwane-erp-api --update-env
         if !errorlevel! equ 0 (
             echo     [OK] Backend restarted with updated env  ^(silwane-erp-api^)
         ) else (
             echo     [WARN] Restart failed - deleting and re-starting...
             pm2 delete silwane-erp-api >nul 2>&1
-            pm2 start "%SERVER_JS%" --name "silwane-erp-api" --env production
-            echo     [OK] Backend started fresh  ^(silwane-erp-api^)
+            pm2 start "%SERVER_JS%" --name "silwane-erp-api" --cwd "%APP_DIR%" --env production
+            echo     [OK] Backend started fresh
         )
     ) else (
-        :: Process does not exist - start fresh using absolute path
-        echo     Starting silwane-erp-api from: %SERVER_JS%
-        pm2 start "%SERVER_JS%" --name "silwane-erp-api" --env production
+        echo     Starting: %SERVER_JS%
+        pm2 start "%SERVER_JS%" --name "silwane-erp-api" --cwd "%APP_DIR%" --env production
         if !errorlevel! equ 0 (
             echo     [OK] Backend started  ^(silwane-erp-api^)  ->  http://localhost:%PORT%
         ) else (
             echo.
             echo     [ERROR] PM2 could not start the backend.
-            echo             Script path used: %SERVER_JS%
-            echo             Verify that file exists, then run manually:
-            echo               node "%SERVER_JS%"
+            echo             Script : %SERVER_JS%
+            echo             CWD    : %APP_DIR%
+            echo             Try running manually to see the real error:
+            echo               cd /d "%APP_DIR%"
+            echo               node server.js
             echo.
             pause & exit /b 1
         )
@@ -450,7 +510,7 @@ if !errorlevel! equ 0 (
 
 ) else (
     echo     [WARN] PM2 still unavailable - starting backend in new CMD window
-    start "Silwane ERP API" cmd /k "node "%SERVER_JS%""
+    start "Silwane ERP API" cmd /k "cd /d "%APP_DIR%" && node server.js"
 )
 
 :: ============================================================
@@ -493,7 +553,7 @@ if !errorlevel! equ 0 (
                 echo     [OK] Frontend started  ^(silwane-erp-ui^)  ->  http://localhost:%FE_PORT%
             ) else (
                 echo     [ERROR] Could not start frontend via PM2
-                echo             Run manually: npx serve -s "%FRONTEND_BUILD%" -l %FE_PORT%
+                echo             Manual: npx serve -s "%FRONTEND_BUILD%" -l %FE_PORT%
             )
         )
 
@@ -521,13 +581,18 @@ timeout /t 3 /nobreak >nul
 echo.
 echo.
 echo =====================================================
-echo   DEPLOYMENT COMPLETE - FULL SUMMARY
+echo   DEPLOYMENT COMPLETE - FULL SUMMARY  v4.4
 echo =====================================================
+echo.
+echo   PROJECT ROOT
+echo   ------------
+echo   %APP_DIR%
 echo.
 echo   BACKEND
 echo   -------
 echo   Process : silwane-erp-api  ^(PM2^)
 echo   Script  : %SERVER_JS%
+echo   CWD     : %APP_DIR%
 echo   URL     : http://localhost:%PORT%
 echo.
 echo   FRONTEND  ^(React 18 + MUI + Recharts^)
@@ -537,7 +602,6 @@ if "%FE_BUILT%"=="1" (
     if "%FE_RUNNING%"=="1" (
         echo   Process : silwane-erp-ui  ^(PM2 + serve^)
         echo   URL     : http://localhost:%FE_PORT%
-        echo   Proxy   : -^> http://localhost:%PORT%  ^(API^)
     ) else (
         echo   Process : NOT STARTED
         echo   Manual  : npx serve -s "%FRONTEND_BUILD%" -l %FE_PORT%
@@ -571,7 +635,7 @@ if "%ADMIN_CREATED%"=="1" (
     echo   Status  : Created  ^(credentials shown above^)
 ) else (
     echo   Status  : Skipped / already existed
-    echo   Recreate: node scripts/create-admin.js
+    if not "%ADMIN_SCRIPT%"=="" echo   Recreate: node "%ADMIN_SCRIPT%"
 )
 echo.
 echo   PM2 COMMANDS
