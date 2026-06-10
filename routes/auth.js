@@ -1,10 +1,14 @@
 const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 const db = require('../config/database');
 const { generateToken, generateRefreshToken } = require('../utils/generateToken');
 const logger = require('../config/logger');
 const { authenticate } = require('../middleware/auth');
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
+const BCRYPT_ROUNDS = parseInt(process.env.BCRYPT_ROUNDS, 10) || 10;
 
 /**
  * @route  POST /api/auth/login
@@ -14,8 +18,6 @@ const { authenticate } = require('../middleware/auth');
 router.post('/login', async (req, res, next) => {
   try {
     const { email, username, password } = req.body;
-
-    // Accept either email or username field
     const identifier = email || username;
 
     if (!identifier || !password) {
@@ -25,7 +27,6 @@ router.post('/login', async (req, res, next) => {
       });
     }
 
-    // Fetch user by email OR username, joining role
     const result = await db.query(
       `SELECT u.id, u.username, u.email, u.password_hash,
               u.first_name, u.last_name, u.is_active,
@@ -37,15 +38,11 @@ router.post('/login', async (req, res, next) => {
     );
 
     if (result.rows.length === 0) {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid email or password.'
-      });
+      return res.status(401).json({ success: false, message: 'Invalid email or password.' });
     }
 
     const user = result.rows[0];
 
-    // Check account status
     if (!user.is_active) {
       return res.status(403).json({
         success: false,
@@ -53,29 +50,18 @@ router.post('/login', async (req, res, next) => {
       });
     }
 
-    // Verify password against bcrypt hash
     const isPasswordValid = await bcrypt.compare(password, user.password_hash);
     if (!isPasswordValid) {
       logger.warn('Failed login attempt', { identifier });
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid email or password.'
-      });
+      return res.status(401).json({ success: false, message: 'Invalid email or password.' });
     }
 
-    // Update last login timestamp
     await db.query(
       'UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = $1',
       [user.id]
     );
 
-    // Build user payload for token
-    const userPayload = {
-      id: user.id,
-      email: user.email,
-      role: user.role || 'viewer'
-    };
-
+    const userPayload = { id: user.id, email: user.email, role: user.role || 'viewer' };
     const token = generateToken(userPayload);
     const refreshToken = generateRefreshToken(userPayload);
 
@@ -120,7 +106,6 @@ router.post('/register', async (req, res, next) => {
       });
     }
 
-    // Check uniqueness
     const existing = await db.query(
       'SELECT id FROM users WHERE username = $1 OR email = $2',
       [username, email]
@@ -132,11 +117,9 @@ router.post('/register', async (req, res, next) => {
       });
     }
 
-    // Hash password
-    const salt = await bcrypt.genSalt(10);
+    const salt = await bcrypt.genSalt(BCRYPT_ROUNDS);
     const passwordHash = await bcrypt.hash(password, salt);
 
-    // Resolve roleId — default to viewer role if not provided
     let resolvedRoleId = roleId;
     if (!resolvedRoleId) {
       const roleResult = await db.query(
@@ -154,8 +137,6 @@ router.post('/register', async (req, res, next) => {
     );
 
     const newUser = result.rows[0];
-
-    // Get role name for token
     const roleRow = await db.query('SELECT name FROM user_roles WHERE id = $1', [resolvedRoleId]);
     const roleName = roleRow.rows[0]?.name || 'viewer';
 
@@ -183,6 +164,48 @@ router.post('/register', async (req, res, next) => {
   } catch (error) {
     logger.error('Registration error', error);
     next(error);
+  }
+});
+
+/**
+ * @route  POST /api/auth/refresh
+ * @desc   Exchange a valid refresh token for a new access token
+ * @access Public
+ */
+router.post('/refresh', async (req, res, next) => {
+  try {
+    const { refreshToken } = req.body;
+
+    if (!refreshToken) {
+      return res.status(400).json({ success: false, message: 'Refresh token required.' });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
+    } catch (err) {
+      return res.status(401).json({ success: false, message: 'Invalid or expired refresh token.' });
+    }
+
+    const result = await db.query(
+      `SELECT u.id, u.email, u.is_active, r.name AS role
+       FROM users u
+       LEFT JOIN user_roles r ON u.role_id = r.id
+       WHERE u.id = $1`,
+      [decoded.id]
+    );
+
+    if (!result.rows.length || !result.rows[0].is_active) {
+      return res.status(401).json({ success: false, message: 'User not found or inactive.' });
+    }
+
+    const user = result.rows[0];
+    const newToken = generateToken({ id: user.id, email: user.email, role: user.role || 'viewer' });
+
+    logger.info('Token refreshed', { userId: user.id });
+    res.json({ success: true, data: { token: newToken } });
+  } catch (err) {
+    next(err);
   }
 });
 
@@ -221,7 +244,7 @@ router.get('/profile', authenticate, async (req, res, next) => {
         avatarUrl: user.avatar_url,
         preferences: user.preferences,
         role: user.role,
-        permissions: user.permissions,
+        permissions: user.permissions || {},
         lastLogin: user.last_login,
         createdAt: user.created_at
       }
@@ -242,34 +265,27 @@ router.put('/profile', authenticate, async (req, res, next) => {
 
     const result = await db.query(
       `UPDATE users
-       SET first_name  = COALESCE($1, first_name),
-           last_name   = COALESCE($2, last_name),
-           phone       = COALESCE($3, phone),
-           address     = COALESCE($4, address),
-           updated_at  = CURRENT_TIMESTAMP
+       SET first_name = COALESCE($1, first_name),
+           last_name  = COALESCE($2, last_name),
+           phone      = COALESCE($3, phone),
+           address    = COALESCE($4, address),
+           updated_at = CURRENT_TIMESTAMP
        WHERE id = $5
        RETURNING id, username, email, first_name, last_name, phone, address`,
       [firstName, lastName, phone, address, req.user.id]
     );
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'User not found.' });
-    }
-
-    const user = result.rows[0];
-    logger.info('Profile updated', { userId: user.id });
-
     res.json({
       success: true,
       message: 'Profile updated successfully.',
       data: {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        firstName: user.first_name,
-        lastName: user.last_name,
-        phone: user.phone,
-        address: user.address
+        id: result.rows[0].id,
+        username: result.rows[0].username,
+        email: result.rows[0].email,
+        firstName: result.rows[0].first_name,
+        lastName: result.rows[0].last_name,
+        phone: result.rows[0].phone,
+        address: result.rows[0].address
       }
     });
   } catch (error) {
@@ -311,13 +327,10 @@ router.post('/change-password', authenticate, async (req, res, next) => {
 
     const isValid = await bcrypt.compare(currentPassword, result.rows[0].password_hash);
     if (!isValid) {
-      return res.status(401).json({
-        success: false,
-        message: 'Current password is incorrect.'
-      });
+      return res.status(401).json({ success: false, message: 'Current password is incorrect.' });
     }
 
-    const salt = await bcrypt.genSalt(10);
+    const salt = await bcrypt.genSalt(BCRYPT_ROUNDS);
     const newHash = await bcrypt.hash(newPassword, salt);
 
     await db.query(
@@ -326,7 +339,6 @@ router.post('/change-password', authenticate, async (req, res, next) => {
     );
 
     logger.info('Password changed', { userId: req.user.id });
-
     res.json({ success: true, message: 'Password changed successfully.' });
   } catch (error) {
     next(error);
@@ -335,7 +347,7 @@ router.post('/change-password', authenticate, async (req, res, next) => {
 
 /**
  * @route  POST /api/auth/logout
- * @desc   Logout user (stateless - client removes token)
+ * @desc   Logout user (stateless — client removes token)
  * @access Private
  */
 router.post('/logout', authenticate, (req, res) => {
@@ -352,11 +364,7 @@ router.get('/verify', authenticate, (req, res) => {
   res.json({
     success: true,
     message: 'Token is valid.',
-    data: {
-      id: req.user.id,
-      email: req.user.email,
-      role: req.user.role
-    }
+    data: { id: req.user.id, email: req.user.email, role: req.user.role }
   });
 });
 
