@@ -16,6 +16,9 @@
   "keywords": ["erp", "inventory", "stock", "purchasing", "sales", "finance", "analytics", "statistics"],
   "author": "Mennouchi Islam Azeddine",
   "license": "MIT",
+    "engines": {
+    "node": "20.x"
+  },
   "dependencies": {
     "express": "^4.18.2",
     "cors": "^2.8.5",
