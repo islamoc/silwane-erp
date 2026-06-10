@@ -153,8 +153,9 @@ const startServer = async () => {
     process.exit(1);
   }
 };
-
+if (require.main === module) {
 startServer();
+}
 
 // =====================================================
 // PROCESS SIGNAL HANDLERS
@@ -175,7 +176,9 @@ const gracefulShutdown = (signal) => {
   }
 };
 
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+if (require.main === module) {
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT',  () => gracefulShutdown('SIGINT'));
 
+}
 module.exports = app;
