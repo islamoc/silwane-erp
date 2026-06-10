@@ -3,12 +3,12 @@
 const express = require('express');
 const router = express.Router();
 const { query: dbQuery } = require('../config/database');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, authorizeRoles } = require('../middleware/auth');
 
 // All routes require authentication
 router.use(authenticate);
 
-// GET /api/customers - list all customers
+// GET /api/customers
 router.get('/', async (req, res) => {
   try {
     const { page = 1, limit = 20, search } = req.query;
@@ -31,7 +31,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-// GET /api/customers/:id - get single customer
+// GET /api/customers/:id
 router.get('/:id', async (req, res) => {
   try {
     const result = await dbQuery('SELECT * FROM customers WHERE id = $1', [req.params.id]);
@@ -42,7 +42,7 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// POST /api/customers - create customer
+// POST /api/customers
 router.post('/', async (req, res) => {
   try {
     const { name, email, phone, company, address, tax_id, notes } = req.body;
@@ -58,7 +58,7 @@ router.post('/', async (req, res) => {
   }
 });
 
-// PUT /api/customers/:id - update customer
+// PUT /api/customers/:id
 router.put('/:id', async (req, res) => {
   try {
     const { name, email, phone, company, address, tax_id, notes, is_active } = req.body;
@@ -79,8 +79,8 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// DELETE /api/customers/:id - soft-delete customer
-router.delete('/:id', authorize('admin', 'manager'), async (req, res) => {
+// DELETE /api/customers/:id — soft-delete; requires admin or manager role
+router.delete('/:id', authorizeRoles('super_admin', 'admin', 'manager'), async (req, res) => {
   try {
     const result = await dbQuery(
       `UPDATE customers SET is_active = false, updated_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING *`,

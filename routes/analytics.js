@@ -1,22 +1,20 @@
-// Analytics Routes
-// Wired strictly to functions exported by controllers/analyticsController.js
+// Analytics Routes — MC07
 
 const express = require('express');
 const router = express.Router();
 const { authenticate } = require('../middleware/auth');
 const analyticsController = require('../controllers/analyticsController');
 
-// All analytics routes require authentication
 router.use(authenticate);
 
-// G31 - Product analytics sheet
+// Per-entity analytics sheets (existing)
 router.get('/products/:id',        analyticsController.getProductAnalytics);
 router.get('/products/:id/export', analyticsController.exportProductAnalytics);
-
-// G33 - Customer analytics sheet
 router.get('/customers/:id',       analyticsController.getCustomerAnalytics);
-
-// G33 - Supplier analytics sheet
 router.get('/suppliers/:id',       analyticsController.getSupplierAnalytics);
+
+// Report-level analytics (previously missing)
+router.get('/vat',                 analyticsController.getVATDeclaration);
+router.get('/balance-sheet',       analyticsController.getBalanceSheet);
 
 module.exports = router;
