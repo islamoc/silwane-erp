@@ -2,43 +2,37 @@ const jwt = require('jsonwebtoken');
 
 /**
  * Generate JWT access token
- * Payload: { id, email, role }
- * @param {object} user - User object with id, email, role
- * @returns {string} JWT token
+ * Env vars used: JWT_SECRET, JWT_EXPIRES_IN (default 24h)
+ * @param {object} user - { id, email, role }
+ * @returns {string} signed JWT
  */
 const generateToken = (user) => {
   return jwt.sign(
-    {
-      id: user.id,
-      email: user.email,
-      role: user.role || 'viewer'
-    },
+    { id: user.id, email: user.email, role: user.role || 'viewer' },
     process.env.JWT_SECRET,
-    {
-      expiresIn: process.env.JWT_EXPIRE || '24h'
-    }
+    { expiresIn: process.env.JWT_EXPIRES_IN || '24h' }
   );
 };
 
 /**
  * Generate JWT refresh token
- * @param {object} user - User object with id
- * @returns {string} Refresh JWT token
+ * Env vars used: JWT_REFRESH_SECRET, JWT_REFRESH_EXPIRES_IN (default 7d)
+ * A DEDICATED secret is used so access tokens cannot be used as refresh tokens.
+ * @param {object} user - { id }
+ * @returns {string} signed JWT
  */
 const generateRefreshToken = (user) => {
   return jwt.sign(
     { id: user.id },
-    process.env.JWT_SECRET,
-    {
-      expiresIn: process.env.JWT_REFRESH_EXPIRE || '7d'
-    }
+    process.env.JWT_REFRESH_SECRET,
+    { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d' }
   );
 };
 
 /**
- * Verify token and return decoded payload
- * @param {string} token - JWT token
- * @returns {object} Decoded token payload
+ * Verify an access token
+ * @param {string} token
+ * @returns {object} decoded payload
  */
 const verifyToken = (token) => {
   try {
@@ -48,8 +42,4 @@ const verifyToken = (token) => {
   }
 };
 
-module.exports = {
-  generateToken,
-  generateRefreshToken,
-  verifyToken
-};
+module.exports = { generateToken, generateRefreshToken, verifyToken };
