@@ -48,8 +48,8 @@ const authenticate = async (req, res, next) => {
 
     // Get fresh user data from database
     const result = await db.query(
-      `SELECT u.id, u.username, u.email, u.first_name, u.last_name,
-              u.is_active, r.name AS role, r.permissions
+      `SELECT u.id, u.username, u.email, u.first_name, u.last_name, u.is_active,
+              r.name AS role, r.permissions
        FROM users u
        LEFT JOIN user_roles r ON u.role_id = r.id
        WHERE u.id = $1`,
@@ -72,6 +72,9 @@ const authenticate = async (req, res, next) => {
       });
     }
 
+    // Normalise role to lowercase for consistent RBAC comparisons
+    const normalisedRole = (user.role || 'viewer').toLowerCase();
+
     // Attach clean user object to request
     req.user = {
       id: user.id,
@@ -79,11 +82,11 @@ const authenticate = async (req, res, next) => {
       email: user.email,
       firstName: user.first_name,
       lastName: user.last_name,
-      role: user.role || 'viewer',
+      role: normalisedRole,
       permissions: user.permissions || {}
     };
 
-    logger.debug('User authenticated', { userId: user.id, role: user.role });
+    logger.debug('User authenticated', { userId: user.id, role: normalisedRole });
     next();
   } catch (error) {
     logger.error('Authentication middleware error', error);
@@ -130,7 +133,10 @@ const authorize = (permission) => {
 
 /**
  * Role-based authorization middleware
- * @param {...string} roles - Allowed roles
+ * Roles passed in MUST be lowercase (matching the DB seed convention).
+ * The middleware normalises req.user.role to lowercase (done in authenticate),
+ * so comparison is always case-insensitive.
+ * @param {...string} roles - Allowed roles (lowercase)
  */
 const authorizeRoles = (...roles) => {
   return (req, res, next) => {
@@ -141,15 +147,19 @@ const authorizeRoles = (...roles) => {
       });
     }
 
-    if (!roles.includes(req.user.role)) {
+    // req.user.role is already lowercased by authenticate()
+    // Normalise the caller-supplied role list to lowercase for safety
+    const normalisedRoles = roles.map(r => r.toLowerCase());
+
+    if (!normalisedRoles.includes(req.user.role)) {
       logger.warn('Role authorization failed', {
         userId: req.user.id,
         userRole: req.user.role,
-        requiredRoles: roles
+        requiredRoles: normalisedRoles
       });
       return res.status(403).json({
         success: false,
-        message: `Access denied. Required roles: ${roles.join(', ')}.`
+        message: `Access denied. Required roles: ${normalisedRoles.join(', ')}.`
       });
     }
 
@@ -157,8 +167,4 @@ const authorizeRoles = (...roles) => {
   };
 };
 
-module.exports = {
-  authenticate,
-  authorize,
-  authorizeRoles
-};
+module.exports = { authenticate, authorize, authorizeRoles };
