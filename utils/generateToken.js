@@ -1,9 +1,9 @@
 const jwt = require('jsonwebtoken');
 
 /**
- * Generate JWT access token
- * Env vars used: JWT_SECRET, JWT_EXPIRES_IN (default 24h)
- * @param {object} user - { id, email, role }
+ * Generate JWT access token.
+ * Env vars: JWT_SECRET, JWT_EXPIRES_IN (default "24h")
+ * @param {{ id: number, email: string, role: string }} user
  * @returns {string} signed JWT
  */
 const generateToken = (user) => {
@@ -15,10 +15,10 @@ const generateToken = (user) => {
 };
 
 /**
- * Generate JWT refresh token
- * Env vars used: JWT_REFRESH_SECRET, JWT_REFRESH_EXPIRES_IN (default 7d)
- * A DEDICATED secret is used so access tokens cannot be used as refresh tokens.
- * @param {object} user - { id }
+ * Generate JWT refresh token.
+ * Env vars: JWT_REFRESH_SECRET, JWT_REFRESH_EXPIRES_IN (default "7d")
+ * A dedicated secret is used so access tokens cannot be replayed as refresh tokens.
+ * @param {{ id: number }} user
  * @returns {string} signed JWT
  */
 const generateRefreshToken = (user) => {
@@ -30,9 +30,10 @@ const generateRefreshToken = (user) => {
 };
 
 /**
- * Verify an access token
+ * Verify an access token.
  * @param {string} token
  * @returns {object} decoded payload
+ * @throws {Error} if invalid or expired
  */
 const verifyToken = (token) => {
   try {

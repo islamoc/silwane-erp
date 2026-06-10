@@ -13,16 +13,7 @@
     "dev-all": "concurrently \"npm run server\" \"npm run client\"",
     "test": "jest --testPathPattern=tests/ --forceExit"
   },
-  "keywords": [
-    "erp",
-    "inventory",
-    "stock",
-    "purchasing",
-    "sales",
-    "finance",
-    "analytics",
-    "statistics"
-  ],
+  "keywords": ["erp", "inventory", "stock", "purchasing", "sales", "finance", "analytics", "statistics"],
   "author": "Mennouchi Islam Azeddine",
   "license": "MIT",
   "dependencies": {
