@@ -14,10 +14,9 @@ const api = axios.create({
   timeout: 15000,
 });
 
-// ── Request interceptor: attach JWT token ─────────────────────────────────────
+// ── Request interceptor: attach JWT token ─────────────────────────────────────────────────
 api.interceptors.request.use(
   (config) => {
-    // Support both storage keys (new: erp_token, legacy: token)
     const token =
       localStorage.getItem('erp_token') ||
       localStorage.getItem('token');
@@ -29,12 +28,11 @@ api.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
-// ── Response interceptor: handle 401 globally ─────────────────────────────────
+// ── Response interceptor: handle 401 globally ──────────────────────────────────────────────
 api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      // Clear all auth tokens and redirect to login
       localStorage.removeItem('erp_token');
       localStorage.removeItem('erp_user');
       localStorage.removeItem('token');
@@ -117,8 +115,13 @@ export const updateStockMovement = (id, data) =>
 export const deleteStockMovement = (id) =>
   api.delete(`/stock-movements/${id}`);
 
+/**
+ * Stock traceability for a product.
+ * Backend route: GET /api/stock-movements/product/:productId/history
+ * (was /traceability/:productId — now aligned with the backend path)
+ */
 export const getStockTraceability = (productId, params) =>
-  api.get(`/stock-movements/traceability/${productId}`, { params });
+  api.get(`/stock-movements/product/${productId}/history`, { params });
 
 // ============ SUPPLIERS ============
 export const getSuppliers = (params) =>
@@ -137,23 +140,24 @@ export const deleteSupplier = (id) =>
   api.delete(`/suppliers/${id}`);
 
 // ============ PURCHASE ORDERS ============
+// Canonical backend path: /api/purchases/orders
 export const getPurchaseOrders = (params) =>
-  api.get('/purchase-orders', { params });
+  api.get('/purchases/orders', { params });
 
 export const getPurchaseOrder = (id) =>
-  api.get(`/purchase-orders/${id}`);
+  api.get(`/purchases/orders/${id}`);
 
 export const createPurchaseOrder = (data) =>
-  api.post('/purchase-orders', data);
+  api.post('/purchases/orders', data);
 
 export const updatePurchaseOrder = (id, data) =>
-  api.put(`/purchase-orders/${id}`, data);
+  api.put(`/purchases/orders/${id}`, data);
 
 export const deletePurchaseOrder = (id) =>
-  api.delete(`/purchase-orders/${id}`);
+  api.delete(`/purchases/orders/${id}`);
 
 export const updatePurchaseOrderStatus = (id, status) =>
-  api.patch(`/purchase-orders/${id}/status`, { status });
+  api.patch(`/purchases/orders/${id}/status`, { status });
 
 // ============ CUSTOMERS ============
 export const getCustomers = (params) =>
@@ -172,42 +176,44 @@ export const deleteCustomer = (id) =>
   api.delete(`/customers/${id}`);
 
 // ============ QUOTES ============
+// Canonical backend path: /api/sales/quotes
 export const getQuotes = (params) =>
-  api.get('/quotes', { params });
+  api.get('/sales/quotes', { params });
 
 export const getQuote = (id) =>
-  api.get(`/quotes/${id}`);
+  api.get(`/sales/quotes/${id}`);
 
 export const createQuote = (data) =>
-  api.post('/quotes', data);
+  api.post('/sales/quotes', data);
 
 export const updateQuote = (id, data) =>
-  api.put(`/quotes/${id}`, data);
+  api.put(`/sales/quotes/${id}`, data);
 
 export const deleteQuote = (id) =>
-  api.delete(`/quotes/${id}`);
+  api.delete(`/sales/quotes/${id}`);
 
 export const convertQuoteToOrder = (id) =>
-  api.post(`/quotes/${id}/convert`);
+  api.post(`/sales/quotes/${id}/convert`);
 
 // ============ ORDERS ============
+// Canonical backend path: /api/sales/orders
 export const getOrders = (params) =>
-  api.get('/orders', { params });
+  api.get('/sales/orders', { params });
 
 export const getOrder = (id) =>
-  api.get(`/orders/${id}`);
+  api.get(`/sales/orders/${id}`);
 
 export const createOrder = (data) =>
-  api.post('/orders', data);
+  api.post('/sales/orders', data);
 
 export const updateOrder = (id, data) =>
-  api.put(`/orders/${id}`, data);
+  api.put(`/sales/orders/${id}`, data);
 
 export const deleteOrder = (id) =>
-  api.delete(`/orders/${id}`);
+  api.delete(`/sales/orders/${id}`);
 
 export const updateOrderStatus = (id, status) =>
-  api.patch(`/orders/${id}/status`, { status });
+  api.patch(`/sales/orders/${id}/status`, { status });
 
 // ============ INVOICES ============
 export const getInvoices = (params) =>
@@ -286,23 +292,24 @@ export const getCustomerStats = (params) =>
   api.get('/statistics/customers', { params });
 
 // ============ USERS ============
+// Canonical backend path: /api/users  (was /interface/users in the frontend)
 export const getUsers = (params) =>
-  api.get('/interface/users', { params });
+  api.get('/users', { params });
 
 export const getUser = (id) =>
-  api.get(`/interface/users/${id}`);
+  api.get(`/users/${id}`);
 
 export const createUser = (data) =>
-  api.post('/interface/users', data);
+  api.post('/users', data);
 
 export const updateUser = (id, data) =>
-  api.put(`/interface/users/${id}`, data);
+  api.put(`/users/${id}`, data);
 
 export const deleteUser = (id) =>
-  api.delete(`/interface/users/${id}`);
+  api.delete(`/users/${id}`);
 
 export const updateUserRole = (id, role) =>
-  api.patch(`/interface/users/${id}/role`, { role });
+  api.patch(`/users/${id}/role`, { role });
 
 // Legacy alias for AuthContext compatibility
 export const login = (email, password) =>
@@ -311,7 +318,11 @@ export const login = (email, password) =>
 export const register = (userData) =>
   api.post('/auth/register', userData);
 
-export const refreshToken = () =>
-  api.post('/auth/refresh');
+/**
+ * Refresh the JWT access token.
+ * Backend: POST /api/auth/refresh — expects { refreshToken } in body.
+ */
+export const refreshToken = (token) =>
+  api.post('/auth/refresh', { refreshToken: token });
 
 export default api;
