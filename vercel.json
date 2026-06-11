@@ -1,0 +1,30 @@
+{
+  "buildCommand": "npm run build-all",
+  "outputDirectory": ".vercel/output",
+  "devCommand": "npm run dev-all",
+  "installCommand": "npm install && cd frontend && npm install",
+  "regions": ["cdg1"],
+  "env": {
+    "PORT": "80"
+  },
+  "functions": {
+    "api/**/*.js": {
+      "runtime": "nodejs20.x",
+      "maxDuration": 30
+    }
+  },
+  "routes": [
+    {
+      "src": "/api/(.*)",
+      "dest": "/api/serverless.js"
+    },
+    {
+      "src": "/health",
+      "dest": "/api/serverless.js"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/frontend/build/$1"
+    }
+  ]
+}

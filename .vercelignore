@@ -1,0 +1,46 @@
+# Ignore frontend node_modules (Vercel installs deps separately)
+frontend/node_modules
+
+# Ignore test files and test config
+**/*.test.js
+**/*.spec.js
+tests/
+
+# Ignore CI/CD config files not needed for Vercel
+.travis.yml
+.gitlab-ci.yml
+Jenkinsfile
+
+# Ignore Docker files
+Dockerfile
+.dockerignore
+docker-compose*.yml
+
+# Ignore PM2 config
+ecosystem.config.js
+ecosystem.config.json
+pm2.config.js
+
+# Ignore development files
+.env
+*.log
+logs/
+npm-debug.log
+yarn-debug.log
+yarn-error.log
+
+# Ignore IDE/editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Ignore output directories that will be built fresh
+uploads/
+dist/
+*.tgz
+
+# Ignore documentation not needed for deployment
+*.md
+!README.md
