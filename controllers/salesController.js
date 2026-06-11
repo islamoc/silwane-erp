@@ -730,4 +730,97 @@ exports.getSalesStatistics = async (req, res) => {
   }
 };
 
+/**
+ * G17: Update quote status (PATCH)
+ * PATCH /api/sales/quotes/:id/status
+ */
+exports.updateQuoteStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    if (!status) {
+      return res.status(400).json({ success: false, message: 'Status is required' });
+    }
+    const result = await db.query(
+      `UPDATE sales_quotes SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING *`,
+      [status, id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Quote not found' });
+    }
+    res.json({ success: true, message: 'Quote status updated', data: result.rows[0] });
+  } catch (error) {
+    console.error('Update quote status error:', error);
+    res.status(500).json({ success: false, message: 'Error updating quote status', error: error.message });
+  }
+};
+
+/**
+ * G17: Delete a quote
+ * DELETE /api/sales/quotes/:id
+ */
+exports.deleteQuote = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await db.query(
+      `DELETE FROM sales_quotes WHERE id = $1 RETURNING id`,
+      [id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Quote not found' });
+    }
+    res.json({ success: true, message: 'Quote deleted successfully' });
+  } catch (error) {
+    console.error('Delete quote error:', error);
+    res.status(500).json({ success: false, message: 'Error deleting quote', error: error.message });
+  }
+};
+
+/**
+ * G16/G18: Update order status (PATCH)
+ * PATCH /api/sales/orders/:id/status
+ */
+exports.updateOrderStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    if (!status) {
+      return res.status(400).json({ success: false, message: 'Status is required' });
+    }
+    const result = await db.query(
+      `UPDATE sales_orders SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING *`,
+      [status, id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+    res.json({ success: true, message: 'Order status updated', data: result.rows[0] });
+  } catch (error) {
+    console.error('Update order status error:', error);
+    res.status(500).json({ success: false, message: 'Error updating order status', error: error.message });
+  }
+};
+
+/**
+ * G16/G18: Delete a sales order
+ * DELETE /api/sales/orders/:id
+ */
+exports.deleteOrder = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await db.query(
+      `DELETE FROM sales_orders WHERE id = $1 RETURNING id`,
+      [id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+    res.json({ success: true, message: 'Order deleted successfully' });
+  } catch (error) {
+    console.error('Delete order error:', error);
+    res.status(500).json({ success: false, message: 'Error deleting order', error: error.message });
+  }
+};
+
+
 module.exports = exports;
