@@ -85,6 +85,10 @@ const RBAC_PROTECTED = [
   ['DELETE', '/api/purchases/orders/0', 'viewer cannot delete purchase order'],
   // GET /api/users — only admin role allowed
   ['GET',    '/api/users',              'non-admin cannot list users'],
+    ['DELETE', '/api/sales/quotes/0',       'non-manager cannot delete quotes'],
+  ['DELETE', '/api/sales/orders/0',       'non-manager cannot delete orders'],
+  ['PATCH',  '/api/sales/quotes/0/status','unauthenticated patch quote status gets 401'],
+  ['PATCH',  '/api/sales/orders/0/status','unauthenticated patch order status gets 401'],
 ];
 
 describe('API Contract — route existence (no auth token → 401, not 404)', () => {
