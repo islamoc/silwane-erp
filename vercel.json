@@ -1,12 +1,8 @@
 {
-  "buildCommand": "npm run build-all",
-  "outputDirectory": ".vercel/output",
-  "devCommand": "npm run dev-all",
+  "buildCommand": "npm run build",
+  "outputDirectory": "frontend/build",
   "installCommand": "npm install && cd frontend && npm install",
   "regions": ["cdg1"],
-  "env": {
-    "PORT": "80"
-  },
   "functions": {
     "api/**/*.js": {
       "runtime": "nodejs20.x",
